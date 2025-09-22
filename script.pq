@@ -1,5 +1,6 @@
 // ===== Changelog =====
-
+// - Added unified provider routing for file, HTTP, and SharePoint sources.
+// - Implemented SharePoint parameter validation with friendly error messaging.
 
 let
   // ===== Parameters =====
@@ -68,32 +69,143 @@ let
 
   // ===== Providers =====
   BuildAbsolutePath = (pathRel as text) as text => Parameters[BasePath] & pathRel,
-  GetSourceContent = (absPath as text) as binary =>
-    let
-      sourceKind = Parameters[SourceKind],
-      content =
-        if sourceKind = "File" then
-          File.Contents(absPath)
-        else if sourceKind = "Http" then
-          Web.Contents(absPath)
-        else if sourceKind = "SharePoint" then
-          let
-            _site = Parameters[SharePointSiteUrl],
-            _todo = SharePoint.Contents(_site) // TODO: навигация к файлу и выбор нужного элемента
-          in
-            error "TODO: реализовать загрузку файла через SharePoint.Contents"
-        else
-          error "Unknown SourceKind"
-    in
-      content,
-  CheckPathExists = (pathRel as text) as logical =>
+  FileProvider = (pathRel as text) as binary =>
     let
       absPath = BuildAbsolutePath(pathRel),
+      // ===== External: try reading file system content =====
+      contentProbe = try File.Contents(absPath)
+    in
+      if contentProbe[HasError] then
+        error Error.Record(
+          "FileProvider",
+          "Не удалось прочитать файл. Проверьте путь и доступ к источнику.",
+          [Path = absPath, Reason = contentProbe[Error]]
+        )
+      else
+        contentProbe[Value],
+  HttpProvider = (pathRel as text) as binary =>
+    let
+      absUrl = BuildAbsolutePath(pathRel),
+      // ===== External: try fetching HTTP content =====
+      contentProbe = try Web.Contents(absUrl)
+    in
+      if contentProbe[HasError] then
+        error Error.Record(
+          "HttpProvider",
+          "Не удалось получить данные по HTTP. Проверьте URL и сетевой доступ.",
+          [Url = absUrl, Reason = contentProbe[Error]]
+        )
+      else
+        contentProbe[Value],
+  SharePointProvider = (pathRel as text) as binary =>
+    let
+      siteUrlRaw = Parameters[SharePointSiteUrl],
+      siteUrl =
+        let
+          trimmed = if siteUrlRaw = null then "" else Text.Trim(siteUrlRaw)
+        in
+          if trimmed = "" then
+            error Error.Record(
+              "SharePointProvider",
+              "Параметр SharePointSiteUrl не задан. Укажите корректный URL сайта.",
+              [SharePointSiteUrl = siteUrlRaw]
+            )
+          else
+            trimmed,
+      normalizedPath = Text.Replace(pathRel, "\\", "/"),
+      pathSegments = List.Transform(Text.Split(normalizedPath, "/"), each Text.Trim(_)),
+      segments =
+        let
+          filtered = List.Select(pathSegments, each _ <> "")
+        in
+          if List.IsEmpty(filtered) then
+            error Error.Record(
+              "SharePointProvider",
+              "Путь к файлу на SharePoint не должен быть пустым.",
+              [RelativePath = pathRel]
+            )
+          else
+            filtered,
+      // ===== External: try connecting to SharePoint site =====
+      rootProbe = try SharePoint.Contents(siteUrl),
+      rootTable =
+        if rootProbe[HasError] then
+          error Error.Record(
+            "SharePointProvider",
+            "Не удалось подключиться к SharePoint. Проверьте URL и учетные данные.",
+            [SharePointSiteUrl = siteUrl, Reason = rootProbe[Error]]
+          )
+        else
+          rootProbe[Value],
+      navigate = (state as any, segment as text) as any =>
+        let
+          ensureTable =
+            if Value.Is(state, type table) then
+              state
+            else
+              error Error.Record(
+                "SharePointProvider",
+                "Неверная структура навигации SharePoint. Ожидалась папка.",
+                [RelativePath = pathRel, Segment = segment]
+              ),
+          match = Table.SelectRows(ensureTable, each [Name] = segment),
+          hasMatch = Table.RowCount(match) > 0
+        in
+          if not hasMatch then
+            error Error.Record(
+              "SharePointProvider",
+              "Указанный путь не найден на SharePoint.",
+              [RelativePath = pathRel, MissingSegment = segment]
+            )
+          else
+            match{0}[Content],
+      resolvedContent = List.Accumulate(segments, rootTable, navigate),
+      binaryContent =
+        if Value.Is(resolvedContent, type binary) then
+          resolvedContent
+        else if Value.Is(resolvedContent, type table) then
+          error Error.Record(
+            "SharePointProvider",
+            "Путь указывает на папку SharePoint, а не на файл.",
+            [RelativePath = pathRel]
+          )
+        else
+          error Error.Record(
+            "SharePointProvider",
+            "Тип содержимого SharePoint не поддерживается.",
+            [RelativePath = pathRel, ContentType = Value.Type(resolvedContent)]
+          )
+    in
+      binaryContent,
+  ProviderHandlers = [
+    File = FileProvider,
+    Http = HttpProvider,
+    SharePoint = SharePointProvider
+  ],
+  Providers =
+    Record.AddField(
+      ProviderHandlers,
+      "GetBinary",
+      (sourceKind as text, identifier as text) as binary =>
+        let
+          handler = Record.FieldOrDefault(ProviderHandlers, sourceKind, null)
+        in
+          if handler = null then
+            error Error.Record(
+              "Providers",
+              "Тип источника не поддерживается.",
+              [SourceKind = sourceKind]
+            )
+          else
+            handler(identifier)
+    ),
+  CheckPathExists = (pathRel as text) as logical =>
+    let
       sourceKind = Parameters[SourceKind],
       exists =
         if sourceKind = "File" then
           let
-            probe = try File.Contents(absPath) otherwise null
+            probe = try Providers[GetBinary](sourceKind, pathRel) otherwise null
           in
             probe <> null
         else
@@ -121,10 +233,9 @@ let
       Record.Field(Parameters[Delimiters], delimiterKey),
   LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
     let
-      absPath = BuildAbsolutePath(pathRel),
       defaultEncoding = Record.Field(Parameters[Encodings], Parameters[Defaults][EncodingKey]),
       effectiveEncoding = if encoding <> null then encoding else defaultEncoding,
-      content = GetSourceContent(absPath),
+      content = Providers[GetBinary](Parameters[SourceKind], pathRel),
       csv = Csv.Document(content, [Delimiter = GetDelimiter(), Encoding = effectiveEncoding]),
       tbl = Table.PromoteHeaders(csv)
     in
