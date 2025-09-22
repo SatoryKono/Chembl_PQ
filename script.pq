@@ -457,6 +457,37 @@ let
               Table.TransformColumnTypes(tbl, existing, effectiveCulture)
         in
           transformed,
+      removeColumnsSafe = (tbl as table, columns as list) as table =>
+        if columns = null or List.Count(columns) = 0 then
+          tbl
+        else
+          Table.RemoveColumns(tbl, columns, MissingField.Ignore),
+      renameColumnsSafe = (tbl as table, renames as list) as table =>
+        if renames = null or List.Count(renames) = 0 then
+          tbl
+        else
+          Table.RenameColumns(tbl, renames, MissingField.Ignore),
+      replaceNullWithValue = (tbl as table, columns as list, replacement as any) as table =>
+        if columns = null or List.Count(columns) = 0 then
+          tbl
+        else
+          Table.ReplaceValue(tbl, null, replacement, Replacer.ReplaceValue, columns),
+      lowercaseColumns = (tbl as table, columns as list) as table =>
+        if columns = null or List.Count(columns) = 0 then
+          tbl
+        else
+          Table.TransformColumns(tbl, List.Transform(columns, each {_, Text.Lower})),
+      castToTextColumns = (tbl as table, columns as list, optional culture as nullable text) as table =>
+        if columns = null or List.Count(columns) = 0 then
+          tbl
+        else
+          transformColumnTypesSafe(tbl, List.Transform(columns, each {_, type text}), culture),
+      expandTableColumnSafe = (tbl as table, columnName as text, columnsToExpand as list, optional newColumnNames as nullable list) as table =>
+        let
+          targetNames = if newColumnNames = null then columnsToExpand else newColumnNames,
+          expanded = Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames, MissingField.Ignore)
+        in
+          expanded,
       normalizePages = (value as any) as nullable text =>
         let
           base = normalizeWhitespace(value),
@@ -504,7 +535,13 @@ let
         TransformColumnTypesSafe = transformColumnTypesSafe,
         NormalizePages = normalizePages,
         TryNumber = tryNumber,
-        NormalizeDoi = normalizeDoi
+        NormalizeDoi = normalizeDoi,
+        RemoveColumnsSafe = removeColumnsSafe,
+        RenameColumnsSafe = renameColumnsSafe,
+        ReplaceNullWithValue = replaceNullWithValue,
+        LowercaseColumns = lowercaseColumns,
+        CastToTextColumns = castToTextColumns,
+        ExpandTableColumnSafe = expandTableColumnSafe
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -514,6 +551,12 @@ let
   NormalizePages = Helpers[NormalizePages],
   TryNumber = Helpers[TryNumber],
   NormalizeDoi = Helpers[NormalizeDoi],
+  RemoveColumnsSafe = Helpers[RemoveColumnsSafe],
+  RenameColumnsSafe = Helpers[RenameColumnsSafe],
+  ReplaceNullWithValue = Helpers[ReplaceNullWithValue],
+  LowercaseColumns = Helpers[LowercaseColumns],
+  CastToTextColumns = Helpers[CastToTextColumns],
+  ExpandTableColumnSafe = Helpers[ExpandTableColumnSafe],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, columns, MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
@@ -581,7 +624,7 @@ let
       final = FinalizeAggColumns(typed, {"citations"})
     in
       final,
-// ===================== document_input =====================
+// ===================== DocumentInput =====================
   ReferenceThresholdsRaw = Loaders[LoadFromTableConfig]("CitationFraction"),
   ReferenceThresholds = Table.Buffer(SelectColumnsSafe(ReferenceThresholdsRaw, {"N", "K_min_significant"})),
   ActivityRaw0 = Data[Activity_in],
@@ -678,7 +721,7 @@ let
         AggAssay = getAssayAgg(ActivityPrepared),
         AggTest = getTestItemAgg(ActivityPrepared),
         AggCit = getCitationsAgg(ActivityPrepared),
- 
+
         RA = Table.RenameColumns(AggActivity, {{"document_chembl_id", "doc_id"}}),
         J1 = Table.Join(AggCit, "document_chembl_id", RA, "doc_id", JoinKind.LeftOuter),
         J1c = Table.RemoveColumns(J1, {"doc_id"}, MissingField.Ignore),
@@ -704,12 +747,11 @@ let
       in
         Final
   ],
-  document_input = [
-    _PubMed = (SoursePubMed as table) =>
-      let
-        Removed = Table.RemoveColumns(
-          SoursePubMed,
-          {
+  DocumentInput =
+    let
+      fromPubMed = (source as table) as table =>
+        let
+          columnsToRemove = {
             "PubMed.JournalTitle",
             "scholar.PMID",
             "scholar.DOI",
@@ -753,58 +795,30 @@ let
             "ChEMBL.authors",
             "ChEMBL.source"
           },
-          MissingField.Ignore
-        ),
-        Repl0 = Table.ReplaceValue(Removed, null, 0, Replacer.ReplaceValue, {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"}),
-        CastTxt = TransformColumnTypesSafe(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
-        LowerAux = Table.TransformColumns(
-          TransformColumnTypesSafe(
-            CastTxt,
-            {
-              {"PubMed.YearCompleted", type text},
-              {"PubMed.MonthCompleted", type text},
-              {"PubMed.DayCompleted", type text},
-              {"PubMed.YearRevised", type text},
-              {"PubMed.MonthRevised", type text},
-              {"PubMed.DayRevised", type text}
-            },
-            "en-US"
-          ),
-          {
-            {"PubMed.PublicationType", Text.Lower},
-            {"PubMed.MeSH_Descriptors", Text.Lower},
-            {"PubMed.MeSH_Qualifiers", Text.Lower},
-            {"PubMed.ChemicalList", Text.Lower},
-            {"PubMed.YearCompleted", Text.Lower},
-            {"PubMed.MonthCompleted", Text.Lower},
-            {"PubMed.DayCompleted", Text.Lower},
-            {"PubMed.YearRevised", Text.Lower},
-            {"PubMed.MonthRevised", Text.Lower},
-            {"PubMed.DayRevised", Text.Lower}
-          }
-        ),
-        Fill0 = Table.ReplaceValue(
-          LowerAux,
-          null,
-          "0",
-          Replacer.ReplaceValue,
-          {"PubMed.YearCompleted", "PubMed.MonthCompleted", "PubMed.DayCompleted", "PubMed.YearRevised", "PubMed.MonthRevised", "PubMed.DayRevised"}
-        ),
-        VolIssTxt = TransformColumnTypesSafe(
-          Fill0,
-          {
-            {"PubMed.Volume", type text},
-            {"PubMed.Issue", type text},
-            {"PubMed.StartPage", type text},
-            {"PubMed.EndPage", type text}
-          }
-        ),
-        RenVI = Table.RenameColumns(VolIssTxt, {{"PubMed.Volume", "volume"}, {"PubMed.Issue", "issue"}}),
-        Pages = Table.CombineColumns(RenVI, {"PubMed.StartPage", "PubMed.EndPage"}, Combiner.CombineTextByDelimiter("-", QuoteStyle.None), "pages"),
-        Ren1 = Table.RenameColumns(Pages, {{"PubMed.ISSN", "ISSN"}, {"PubMed.PublicationType", "publication_type"}}),
-        Ren2 = Table.RenameColumns(
-          Ren1,
-          {
+          dropNoise = RemoveColumnsSafe(source, columnsToRemove),
+          numericToFill = {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"},
+          filledNumeric = ReplaceNullWithValue(dropNoise, numericToFill, 0),
+          textColumns = {"PubMed.ArticleTitle", "PubMed.Abstract"},
+          textPrepared = CastToTextColumns(filledNumeric, textColumns),
+          dateColumns = {
+            "PubMed.YearCompleted",
+            "PubMed.MonthCompleted",
+            "PubMed.DayCompleted",
+            "PubMed.YearRevised",
+            "PubMed.MonthRevised",
+            "PubMed.DayRevised"
+          },
+          datesAsText = CastToTextColumns(textPrepared, dateColumns, "en-US"),
+          lowerTargets = {"PubMed.PublicationType", "PubMed.MeSH_Descriptors", "PubMed.MeSH_Qualifiers", "PubMed.ChemicalList"} & dateColumns,
+          lowered = LowercaseColumns(datesAsText, lowerTargets),
+          filledDates = ReplaceNullWithValue(lowered, dateColumns, "0"),
+          pageColumns = {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"},
+          pagesAsText = CastToTextColumns(filledDates, pageColumns),
+          renamedVolumeIssue = RenameColumnsSafe(pagesAsText, {{"PubMed.Volume", "volume"}, {"PubMed.Issue", "issue"}}),
+          combinedPages = Table.CombineColumns(renamedVolumeIssue, {"PubMed.StartPage", "PubMed.EndPage"}, Combiner.CombineTextByDelimiter("-", QuoteStyle.None), "pages"),
+          renameMap = {
+            {"PubMed.ISSN", "ISSN"},
+            {"PubMed.PublicationType", "publication_type"},
             {"PubMed.PMID", "PMID"},
             {"PubMed.DOI", "DOI"},
             {"PubMed.ArticleTitle", "title"},
@@ -818,52 +832,41 @@ let
             {"PubMed.DayRevised", "revised.day"},
             {"PubMed.Error", "error"},
             {"PubMed.MeSH_Descriptors", "MeSH.descriptors"}
-          }
-        ),
-        Reorder = Table.ReorderColumns(
-          Ren2,
-          {
-            "PMID",
-            "DOI",
-            "title",
-            "abstract",
-            "ISSN",
-            ".journal",
-            "volume",
-            "issue",
-            "pages",
-            "publication_type",
-            "MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "completed.year",
-            "completed.month",
-            "completed.day",
-            "revised.year",
-            "revised.month",
-            "revised.day",
-            "error"
           },
-          MissingField.Ignore
-        ),
-        Lower = Table.TransformColumns(
-          Reorder,
-          {
-            {"publication_type", Text.Lower},
-            {"title", Text.Lower},
-            {"abstract", Text.Lower},
-            {"DOI", Text.Lower},
-            {".journal", Text.Lower}
-          }
-        ),
-        Ren3 = Table.RenameColumns(Lower, {{"pages", "page"}, {"DOI", "PubMed.doi"}})
-      in
-        Ren3,
-    _scholar = (SourseScholar as table) =>
-      let
-        Removed = Table.RemoveColumns(
-          SourseScholar,
-          {
+          renamed = RenameColumnsSafe(combinedPages, renameMap),
+          ordered = Table.ReorderColumns(
+            renamed,
+            {
+              "PMID",
+              "DOI",
+              "title",
+              "abstract",
+              "ISSN",
+              ".journal",
+              "volume",
+              "issue",
+              "pages",
+              "publication_type",
+              "MeSH.descriptors",
+              "PubMed.MeSH_Qualifiers",
+              "PubMed.ChemicalList",
+              "completed.year",
+              "completed.month",
+              "completed.day",
+              "revised.year",
+              "revised.month",
+              "revised.day",
+              "error"
+            },
+            MissingField.Ignore
+          ),
+          loweredFinal = LowercaseColumns(ordered, {"publication_type", "title", "abstract", "DOI", ".journal"}),
+          final = RenameColumnsSafe(loweredFinal, {{"pages", "page"}, {"DOI", "PubMed.doi"}})
+        in
+          final,
+        fromScholar = (source as table) as table =>
+          let
+          columnsToRemove = {
             "PubMed.PMID",
             "PubMed.DOI",
             "PubMed.ArticleTitle",
@@ -922,36 +925,23 @@ let
             "ChEMBL.authors",
             "ChEMBL.source"
           },
-          MissingField.Ignore
-        ),
-        Cast = TransformColumnTypesSafe(
-          Removed,
-          {
-            {"scholar.ExternalIds", type text},
-            {"scholar.PublicationTypes", type text},
-            {"scholar.Venue", type text},
-            {"scholar.DOI", type text}
-          }
-        ),
-        Repl = Table.ReplaceValue(Cast, "0", null, Replacer.ReplaceValue, {"scholar.DOI", "scholar.PublicationTypes"}),
-        Lower = Table.TransformColumns(
-          Repl,
-          {
-            {"scholar.DOI", Text.Lower},
-            {"scholar.PublicationTypes", Text.Lower},
-            {"scholar.Venue", Text.Lower},
-            {"scholar.ExternalIds", Text.Lower}
-          }
-        ),
-        FixErr = Table.ReplaceValue(Lower, 0, null, Replacer.ReplaceValue, {"scholar.Error"}),
-        Ren = Table.RenameColumns(FixErr, {{"scholar.DOI", "scholar.doi"}})
-      in
-        Ren,
-    _ChEMBL = (SourseChEMBL as table) =>
-      let
-        Removed = Table.RemoveColumns(
-          SourseChEMBL,
-          {
+          dropNoise = RemoveColumnsSafe(source, columnsToRemove),
+          textColumns = {
+            "scholar.ExternalIds",
+            "scholar.PublicationTypes",
+            "scholar.Venue",
+            "scholar.DOI"
+          },
+          typed = CastToTextColumns(dropNoise, textColumns),
+          zeroToNull = Table.ReplaceValue(typed, "0", null, Replacer.ReplaceValue, {"scholar.DOI", "scholar.PublicationTypes"}),
+          lowered = LowercaseColumns(zeroToNull, {"scholar.DOI", "scholar.PublicationTypes", "scholar.Venue", "scholar.ExternalIds"}),
+          fixedError = Table.ReplaceValue(lowered, 0, null, Replacer.ReplaceValue, {"scholar.Error"}),
+          final = RenameColumnsSafe(fixedError, {{"scholar.DOI", "scholar.doi"}})
+        in
+          final,
+        fromChEMBL = (source as table) as table =>
+          let
+          columnsToRemove = {
             "PubMed.ArticleTitle",
             "PubMed.Abstract",
             "PubMed.JournalTitle",
@@ -1004,49 +994,33 @@ let
             "ChEMBL.source",
             "ChEMBL.journal"
           },
-          MissingField.Ignore
-        ),
-        Cast = TransformColumnTypesSafe(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
-        Ren1 = Table.RenameColumns(Cast, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
-        Ren2 = Table.RenameColumns(Ren1, {{"ChEMBL.title", "title"}, {"ChEMBL.document_chembl_id", "document_chembl_id"}, {"ChEMBL.abstract", "abstract"}}),
-        Lower = Table.TransformColumns(Ren2, {{"DOI", Text.Lower}, {"ChEMBL.doi", Text.Lower}}),
-        Same = Table.AddColumn(Lower, "same_doi", each [DOI] = [ChEMBL.doi], type logical),
-        Ren3 = Table.RenameColumns(
-          Same,
-          {
-            {"ChEMBL.journal_abbrev", "journal"},
-            {"ChEMBL.volume", "volume"},
-            {"ChEMBL.issue", "issue"},
-            {"ChEMBL.authors", "authors"},
-            {"ChEMBL.year", "year"}
-          }
-        ),
-        Repl0 = Table.ReplaceValue(Ren3, null, 0, Replacer.ReplaceValue, {"volume", "issue", "ChEMBL.first_page", "ChEMBL.last_page"}),
-        Lower2 = Table.TransformColumns(
-          Repl0,
-          {
-            {"title", Text.Lower},
-            {"abstract", Text.Lower},
-            {"ChEMBL.doi", Text.Lower},
-            {"authors", Text.Lower},
-            {"journal", Text.Lower}
-          }
-        ),
-        Pages = Table.CombineColumns(
-          TransformColumnTypesSafe(Lower2, {{"ChEMBL.first_page", type text}, {"ChEMBL.last_page", type text}}, "en-US"),
-          {"ChEMBL.first_page", "ChEMBL.last_page"},
-          Combiner.CombineTextByDelimiter("-", QuoteStyle.None),
-          "page"
-        ),
-        Removed2 = Table.RemoveColumns(Pages, {"DOI"}, MissingField.Ignore)
-      in
-        Removed2,
-    _OpenAlex = (SourseOpenAlex as table) =>
-      let
-        Cast = TransformColumnTypesSafe(SourseOpenAlex, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
-        Removed = Table.RemoveColumns(
-          Cast,
-          {
+          dropNoise = RemoveColumnsSafe(source, columnsToRemove),
+          typed = CastToTextColumns(dropNoise, {"ChEMBL.volume", "ChEMBL.issue", "ChEMBL.doi"}),
+          renamedIds = RenameColumnsSafe(typed, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
+          renamedCore = RenameColumnsSafe(renamedIds, {{"ChEMBL.title", "title"}, {"ChEMBL.document_chembl_id", "document_chembl_id"}, {"ChEMBL.abstract", "abstract"}}),
+          loweredDoi = LowercaseColumns(renamedCore, {"DOI", "ChEMBL.doi"}),
+          withSameDoi = Table.AddColumn(loweredDoi, "same_doi", each [DOI] = [ChEMBL.doi], type logical),
+          renamedMeta = RenameColumnsSafe(
+            withSameDoi,
+            {
+              {"ChEMBL.journal_abbrev", "journal"},
+              {"ChEMBL.volume", "volume"},
+              {"ChEMBL.issue", "issue"},
+              {"ChEMBL.authors", "authors"},
+              {"ChEMBL.year", "year"}
+            }
+          ),
+          filledNulls = ReplaceNullWithValue(renamedMeta, {"volume", "issue", "ChEMBL.first_page", "ChEMBL.last_page"}, 0),
+          loweredText = LowercaseColumns(filledNulls, {"title", "abstract", "ChEMBL.doi", "authors", "journal"}),
+          pagesAsText = CastToTextColumns(loweredText, {"ChEMBL.first_page", "ChEMBL.last_page"}, "en-US"),
+          combinedPages = Table.CombineColumns(pagesAsText, {"ChEMBL.first_page", "ChEMBL.last_page"}, Combiner.CombineTextByDelimiter("-", QuoteStyle.None), "page"),
+          final = RemoveColumnsSafe(combinedPages, {"DOI"})
+        in
+          final,
+        fromOpenAlex = (source as table) as table =>
+          let
+          typed = TransformColumnTypesSafe(source, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
+          columnsToRemove = {
             "PubMed.ArticleTitle",
             "PubMed.Abstract",
             "PubMed.JournalTitle",
@@ -1100,49 +1074,38 @@ let
             "crossref.Subject",
             "crossref.Error"
           },
-          MissingField.Ignore
-        ),
-        Ren = Table.RenameColumns(Removed, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
-        Flag = Table.AddColumn(Ren, "same_doi", each [DOI] = [OpenAlex.DOI], type logical),
-        Ren1 = Table.RenameColumns(
-          Flag,
-          {
-            {"OpenAlex.PublicationTypes", "publication_type"},
-            {"OpenAlex.TypeCrossref", "crossref_type"},
-            {"OpenAlex.MeshDescriptors", "MeSH.descriptors"}
-          }
-        ),
-        Removed2 = Table.RemoveColumns(Ren1, {"OpenAlex.MeshQualifiers"}, MissingField.Ignore),
-        Ren2 = Table.RenameColumns(Removed2, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
-        Lower = Table.TransformColumns(
-          Ren2,
-          {
-            {"MeSH.descriptors", Text.Lower},
-            {"crossref_type", Text.Lower},
-            {"OpenAlex.DOI", Text.Lower},
-            {"DOI", Text.Lower}
-          }
-        ),
-        Removed3 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
-        Ren3 = Table.RenameColumns(Removed3, {{"OpenAlex.DOI", "OpenAlex.doi"}})
-      in
-        Ren3,
-    _crossref = (Soursecrossref as table) =>
-      let
-        Cast = TransformColumnTypesSafe(
-          Soursecrossref,
-          {
-            {"PubMed.PMID", Int64.Type},
-            {"PubMed.DOI", type text},
-            {"crossref.DOI", type text},
-            {"crossref.Title", type text},
-            {"crossref.Type", type text}
-          }
-        ),
-        Ren = Table.RenameColumns(Cast, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
-        Removed = Table.RemoveColumns(
-          Ren,
-          {
+          dropNoise = RemoveColumnsSafe(typed, columnsToRemove),
+          renamedIds = RenameColumnsSafe(dropNoise, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
+          withSameDoi = Table.AddColumn(renamedIds, "same_doi", each [DOI] = [OpenAlex.DOI], type logical),
+          renamedMeta = RenameColumnsSafe(
+            withSameDoi,
+            {
+              {"OpenAlex.PublicationTypes", "publication_type"},
+              {"OpenAlex.TypeCrossref", "crossref_type"},
+              {"OpenAlex.MeshDescriptors", "MeSH.descriptors"}
+            }
+          ),
+          dropQualifiers = RemoveColumnsSafe(renamedMeta, {"OpenAlex.MeshQualifiers"}),
+          renamedIds2 = RenameColumnsSafe(dropQualifiers, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
+          lowered = LowercaseColumns(renamedIds2, {"MeSH.descriptors", "crossref_type", "OpenAlex.DOI", "DOI"}),
+          removedDoi = RemoveColumnsSafe(lowered, {"DOI"}),
+          final = RenameColumnsSafe(removedDoi, {{"OpenAlex.DOI", "OpenAlex.doi"}})
+        in
+          final,
+        fromCrossRef = (source as table) as table =>
+          let
+          typed = TransformColumnTypesSafe(
+            source,
+            {
+              {"PubMed.PMID", Int64.Type},
+              {"PubMed.DOI", type text},
+              {"crossref.DOI", type text},
+              {"crossref.Title", type text},
+              {"crossref.Type", type text}
+            }
+          ),
+          renamedIds = RenameColumnsSafe(typed, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
+          columnsToRemove = {
             "PubMed.ArticleTitle",
             "PubMed.Abstract",
             "PubMed.JournalTitle",
@@ -1199,64 +1162,60 @@ let
             "OpenAlex.Id",
             "OpenAlex.Error"
           },
-          MissingField.Ignore
-        ),
-        Ren1 = Table.RenameColumns(Removed, {{"crossref.Type", "publication_type"}, {"crossref.Title", "title"}, {"crossref.Error", "Error"}}),
-        Lower = Table.TransformColumns(Ren1, {{"title", Text.Lower}}),
-        Removed2 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
-        Ren2 = Table.RenameColumns(Removed2, {{"crossref.DOI", "crossref.doi"}})
+          dropNoise = RemoveColumnsSafe(renamedIds, columnsToRemove),
+          renamedMeta = RenameColumnsSafe(dropNoise, {{"crossref.Type", "publication_type"}, {"crossref.Title", "title"}, {"crossref.Error", "Error"}}),
+          lowered = LowercaseColumns(renamedMeta, {"title"}),
+          removedDoi = RemoveColumnsSafe(lowered, {"DOI"}),
+          final = RenameColumnsSafe(removedDoi, {{"crossref.DOI", "crossref.doi"}})
+        in
+          final,
+        mergeSources = (source as table) as table =>
+          let
+          pubMedPrepared = fromPubMed(source),
+          pubMed = RemoveColumnsSafe(pubMedPrepared, {"ChEMBL.document_chembl_id"}),
+          chembl = fromChEMBL(source),
+          scholar = fromScholar(source),
+          openAlex = fromOpenAlex(source),
+          crossRefBase = fromCrossRef(source),
+          crossRef = TransformColumnTypesSafe(Table.DuplicateColumn(crossRefBase, "PMID", "crossref.PMID"), {{"crossref.PMID", type text}}),
+          joinChEMBL = Table.NestedJoin(pubMed, {"PMID"}, chembl, {"PMID"}, "ChEMBL", JoinKind.LeftOuter),
+          withChEMBL = ExpandTableColumnSafe(
+            joinChEMBL,
+            "ChEMBL",
+            {"title", "abstract", "ChEMBL.doi", "volume", "issue", "page", "authors", "document_chembl_id"},
+            {"ChEMBL.title", "ChEMBL.abstract", "ChEMBL.doi", "ChEMBL.volume", "ChEMBL.issue", "ChEMBL.page", "authors", "ChEMBL.document_chembl_id"}
+          ),
+          joinScholar = Table.NestedJoin(withChEMBL, {"PMID"}, scholar, {"scholar.PMID"}, "Scholar", JoinKind.LeftOuter),
+          withScholar = ExpandTableColumnSafe(
+            joinScholar,
+            "Scholar",
+            {"scholar.doi", "scholar.PublicationTypes", "scholar.Venue", "scholar.Error"}
+          ),
+          joinOpenAlex = Table.NestedJoin(withScholar, {"PMID"}, openAlex, {"OpenAlex.PMID"}, "OpenAlex", JoinKind.LeftOuter),
+          withOpenAlex = ExpandTableColumnSafe(
+            joinOpenAlex,
+            "OpenAlex",
+            {"OpenAlex.doi", "publication_type", "crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "MeSH.descriptors", "Error"},
+            {"OpenAlex.doi", "OpenAlex.publication_type", "OpenAlex.crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "OpenAlex.MeSH.descriptors", "OpenAlex.Error"}
+          ),
+          joinCrossRef = Table.NestedJoin(withOpenAlex, {"PMID"}, crossRef, {"crossref.PMID"}, "CrossRef", JoinKind.LeftOuter),
+          merged = ExpandTableColumnSafe(
+            joinCrossRef,
+            "CrossRef",
+            {"crossref.doi", "publication_type", "crossref.Subtype", "title", "crossref.Subtitle", "crossref.Subject", "Error"},
+            {"crossref.doi", "crossref.publication_type", "crossref.crossref.Subtype", "crossref.title", "crossref.crossref.Subtitle", "crossref.crossref.Subject", "crossref.Error"}
+          )
+        in
+          merged
       in
-        Ren2,
-    _input = (SourseTable as table) =>
-      let
-        Source1 = SourseTable,
-        SourcePubMed0 = _PubMed(Source1),
-        SourcePubMed = Table.RemoveColumns(SourcePubMed0, {"ChEMBL.document_chembl_id"}, MissingField.Ignore),
-        SourceScholar = _scholar(Source1),
-        SourceChEMBL = _ChEMBL(Source1),
-        SourceOpenAlex = _OpenAlex(Source1),
-        SourceCrossRef =  TransformColumnTypesSafe(Table.DuplicateColumn(_crossref(Source1), "PMID", "crossref.PMID"),{{"crossref.PMID", type text}}),
-        J1 = Table.NestedJoin(SourcePubMed, {"PMID"}, SourceChEMBL, {"PMID"}, "ChEMBL"),
-        E1 = Table.ExpandTableColumn(
-          J1,
-          "ChEMBL",
-          {"title", "abstract", "ChEMBL.doi", "volume", "issue", "page", "authors", "document_chembl_id"},
-          {
-            "ChEMBL.title",
-            "ChEMBL.abstract",
-            "ChEMBL.doi",
-            "ChEMBL.volume",
-            "ChEMBL.issue",
-            "ChEMBL.page",
-            "authors",
-            "ChEMBL.document_chembl_id"
-          }
-        ),
-        J2 = Table.NestedJoin(E1, {"PMID"}, SourceScholar, {"scholar.PMID"}, "Scholar"),
-        E2 = Table.ExpandTableColumn(
-          J2,
-          "Scholar",
-          {"scholar.doi", "scholar.PublicationTypes", "scholar.Venue", "scholar.Error"},
-          {"scholar.doi", "scholar.PublicationTypes", "scholar.Venue", "scholar.Error"}
-        ),
-        J3 = Table.NestedJoin(E2, {"PMID"}, SourceOpenAlex, {"OpenAlex.PMID"}, "OpenAlex"),
-        E3 = Table.ExpandTableColumn(
-          J3,
-          "OpenAlex",
-          {"OpenAlex.doi", "publication_type", "crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "MeSH.descriptors", "Error"},
-          {"OpenAlex.doi", "OpenAlex.publication_type", "OpenAlex.crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "OpenAlex.MeSH.descriptors", "OpenAlex.Error"}
-        ),
-        J4 = Table.NestedJoin(E3, {"PMID"}, SourceCrossRef, {"crossref.PMID"}, "CrossRef"),
-        E4 = Table.ExpandTableColumn(
-          J4,
-          "CrossRef",
-          {"crossref.doi", "publication_type", "crossref.Subtype", "title", "crossref.Subtitle", "crossref.Subject", "Error"},
-          {"crossref.doi", "crossref.publication_type", "crossref.crossref.Subtype", "crossref.title", "crossref.crossref.Subtitle", "crossref.crossref.Subject", "crossref.Error"}
-        )
-      in
-        E4
-  ],
-
+        [
+          FromPubMed = fromPubMed,
+          FromScholar = fromScholar,
+          FromChEMBL = fromChEMBL,
+          FromOpenAlex = fromOpenAlex,
+          FromCrossRef = fromCrossRef,
+          MergeSources = mergeSources
+        ],
 // =====================================================
 // Modules (validation)
 // =====================================================
@@ -1581,7 +1540,7 @@ let
     get_validation = () as table =>
       let
         Source = Data[Document_out],
-        Joined = document_input[_input](Source),
+        Joined = DocumentInput[MergeSources](Source),
         Validated = Validation[ValidateAll](Joined),
         AddInvalid = Table.AddColumn(
           Validated,
