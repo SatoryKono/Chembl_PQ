@@ -488,6 +488,41 @@ let
           expanded = Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames, MissingField.Ignore)
         in
           expanded,
+      joinAndExpand = (
+          source as table,
+          sourceKeys as list,
+          reference as table,
+          referenceKeys as list,
+          nestedColumnName as text,
+          optional columnsToExpand as nullable list,
+          optional newColumnNames as nullable list
+        ) as table =>
+        let
+          joined = Table.NestedJoin(source, sourceKeys, reference, referenceKeys, nestedColumnName, JoinKind.LeftOuter),
+          expanded =
+            if columnsToExpand = null then
+              joined
+            else
+              expandTableColumnSafe(joined, nestedColumnName, columnsToExpand, newColumnNames)
+        in
+          expanded,
+      replaceTextInColumn = (tbl as table, columnName as text, replacements as list) as table =>
+        if not List.Contains(Table.ColumnNames(tbl), columnName) then
+          tbl
+        else
+          List.Accumulate(
+            replacements,
+            tbl,
+            (state as table, replacement as record) =>
+              let
+                oldValue = Record.FieldOrDefault(replacement, "Old", null),
+                newValue = Record.FieldOrDefault(replacement, "New", null)
+              in
+                if oldValue = null then
+                  state
+                else
+                  Table.ReplaceValue(state, oldValue, newValue, Replacer.ReplaceText, {columnName})
+          ),
       normalizePages = (value as any) as nullable text =>
         let
           base = normalizeWhitespace(value),
@@ -541,7 +576,9 @@ let
         ReplaceNullWithValue = replaceNullWithValue,
         LowercaseColumns = lowercaseColumns,
         CastToTextColumns = castToTextColumns,
-        ExpandTableColumnSafe = expandTableColumnSafe
+        ExpandTableColumnSafe = expandTableColumnSafe,
+        JoinAndExpand = joinAndExpand,
+        ReplaceTextInColumn = replaceTextInColumn
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -557,6 +594,8 @@ let
   LowercaseColumns = Helpers[LowercaseColumns],
   CastToTextColumns = Helpers[CastToTextColumns],
   ExpandTableColumnSafe = Helpers[ExpandTableColumnSafe],
+  JoinAndExpand = Helpers[JoinAndExpand],
+  ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, columns, MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
@@ -1846,82 +1885,119 @@ let
               ordered,
           finalTable = ApplyDocumentSchema(withExperimentalFlag)
         in
-          finalTable
+          finalTable,
 
+      // ===== BuildTestitemTable =====
+      // Назначение: нормализация тестируемых сущностей и присоединение агрегатов документа.
+      BuildTestitemTable = () as table =>
+        let
+          textParams = Parameters[TextCleanup],
+          pipeSeparator = textParams[PipeSeparator],
+          referenceRaw = Data[Testitem_in],
+          referenceSchema = {
+            {"molecule_chembl_id", type text},
+            {"all_names", type text},
+            {"nstereo", Int64.Type}
+          },
+          referenceTyped = TransformColumnTypesSafe(referenceRaw, referenceSchema),
+          sourceRaw = Data[Testitem_out],
+          sourceSchema = {
+            {"molecule_chembl_id", type text},
+            {"pref_name", type text},
+            {"synonyms", type text},
+            {"molecule_type", type text},
+            {"structure_type", type text},
+            {"is_radical", type logical},
+            {"standard_inchi_key", type text},
+            {"document_chembl_id", type text}
+          },
+          sourceTyped = TransformColumnTypesSafe(sourceRaw, sourceSchema),
+          withReference = JoinAndExpand(
+            sourceTyped,
+            {"molecule_chembl_id"},
+            referenceTyped,
+            {"molecule_chembl_id"},
+            "TestitemReference",
+            {"all_names", "nstereo"},
+            {"all_names", "nstereo"}
+          ),
+          lowercaseText = LowercaseColumns(withReference, {"synonyms", "all_names", "pref_name"}),
+          doubleQuote = Character.FromNumber(34),
+          openToken = "[" & doubleQuote,
+          closeToken = doubleQuote & "]",
+          synonymReplacements = {
+            [Old = closeToken, New = ""],
+            [Old = openToken, New = ""]
+          },
+          synonymsSanitized = ReplaceTextInColumn(lowercaseText, "synonyms", synonymReplacements),
+          synonymsPiped = Table.TransformColumns(
+            synonymsSanitized,
+            {{"synonyms", each if _ = null then null else Text.Replace(_, doubleQuote, pipeSeparator), type nullable text}}
+          ),
+          chiralityShifted = Table.TransformColumns(
+            synonymsPiped,
+            {{"nstereo", each if _ = null then null else _ - 1, Int64.Type}}
+          ),
+          chiralityFlag = Table.TransformColumns(
+            chiralityShifted,
+            {{"nstereo", each if _ = null then false else _ <> 0, type logical}}
+          ),
+          renamedChirality = Table.RenameColumns(chiralityFlag, {{"nstereo", "unknown_chirality"}}, MissingField.Ignore),
+          textColumnsTyped = TransformColumnTypesSafe(
+            renamedChirality,
+            {{"synonyms", type text}, {"all_names", type text}, {"pref_name", type text}, {"unknown_chirality", type logical}}
+          ),
+          withDocumentId = EnsureColumn(textColumnsTyped, "document_chembl_id", null, type text),
+          documentAggRaw = citations[get_testitem_agg](),
+          documentAggTyped = TransformColumnTypesSafe(
+            documentAggRaw,
+            {{"document_chembl_id", type text}, {"n_testitem", Int64.Type}}
+          ),
+          withAggregates = JoinAndExpand(
+            withDocumentId,
+            {"document_chembl_id"},
+            documentAggTyped,
+            {"document_chembl_id"},
+            "DocumentTestitemAgg",
+            {"n_testitem"},
+            {"document_testitem_total"}
+          ),
+          aggregatesFinal = FinalizeAggColumns(withAggregates, {"document_testitem_total"}),
+          withInvalidFlag = Table.AddColumn(
+            aggregatesFinal,
+            "invalid_record",
+            each not (
+              [molecule_type] = "Small molecule"
+                and [structure_type] = "MOL"
+                and [is_radical] = false
+                and [standard_inchi_key] <> ""
+            ),
+            type logical
+          ),
+          columnOrder = {
+            "molecule_chembl_id",
+            "pref_name",
+            "all_names",
+            "synonyms",
+            "molecule_type",
+            "structure_type",
+            "is_radical",
+            "standard_inchi_key",
+            "unknown_chirality",
+            "document_chembl_id",
+            "document_testitem_total",
+            "invalid_record"
+          },
+          finalTestitem = Table.ReorderColumns(withInvalidFlag, columnOrder, MissingField.Ignore)
+        in
+          finalTestitem,
 
-    in
-      [
-        BuildValidationFrame = BuildValidationFrame,
-        BuildDocumentTable = BuildDocumentTable
-      ],
-// ===================== document_validation =====================
-  data_validation_base = [
-    // ===== get_validation =====
-    // Назначение: валидация документарных записей и подготовка нормализованных атрибутов.
-    get_validation = () as table =>
-      let
-        documentSource = Data[Document_out],
-        mergedSources = DocumentInput[MergeSources](documentSource),
-        validatedRows = Validation[ValidateAll](mergedSources),
-        prepared = Modules[BuildValidationFrame](validatedRows)
-      in
-        prepared,
-
-    // ===== get_document =====
-    // Назначение: возврат очищенной таблицы документов для downstream-потребителей.
-    get_document = () =>
-      Modules[BuildDocumentTable](),
-    // ===== get_testitem =====
-    // Назначение: объединение тестируемых сущностей с эталонным справочником и расчёт флагов качества.
-    get_testitem = () =>
-      let
-        get_reference = () =>
-          let
-            Source = Data[Testitem_in],
-            #"Changed Type" = TransformColumnTypesSafe(
-              Source,
-              {
-                {"molecule_chembl_id", type text},
-                {"all_names", type text},
-                
-                {"nstereo", Int64.Type}
-                 
-              }
-            )
-          in
-            #"Changed Type",
-        Source = Data[Testitem_out],
-
-        #"Merged Queries" = Table.NestedJoin(Source, {"molecule_chembl_id"}, get_reference(), {"molecule_chembl_id"}, "NewColumn"),
-        #"Expanded NewColumn" = Table.ExpandTableColumn(
-          #"Merged Queries",
-          "NewColumn",
-          {"all_names", "nstereo"},
-          {"all_names", "nstereo"}
-        ),
-        #"Lowercased Text" = Table.TransformColumns(#"Expanded NewColumn", {{"synonyms", Text.Lower}, {"all_names", Text.Lower}}),
-        #"Replaced Value" = Table.ReplaceValue(#"Lowercased Text", """]", "", Replacer.ReplaceText, {"synonyms"}),
-        #"Replaced Value1" = Table.ReplaceValue(#"Replaced Value", "[""", "", Replacer.ReplaceText, {"synonyms"}),
-        #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1", """", "|", Replacer.ReplaceText, {"synonyms"}),
-        #"Lowercased Text1" = Table.TransformColumns(#"Replaced Value2", {{"pref_name", Text.Lower}}),
-        #"Added to Column" = Table.TransformColumns(#"Lowercased Text1", {{"nstereo", each List.Sum({_, -1}), Int64.Type}}),
-        #"Changed Type1" = TransformColumnTypesSafe(#"Added to Column", {{"nstereo", type logical}}),
-        #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"nstereo", "unknown_chirality"}}),
-        #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> "")),
-        Ordered = Table.ReorderColumns(
-          #"Added Custom",
-          List.Sort(Table.ColumnNames(#"Added Custom"))
-        )
-      in
-        Ordered,
-    // ===== get_assay =====
-    // Назначение: типизация и очистка витрины биологических тестов.
-    get_assay = () =>
-      let
-        Source = Data[Assay_out],
-        #"Changed Type" = TransformColumnTypesSafe(
-          Source,
-          {
+      // ===== BuildAssayTable =====
+      // Назначение: типизация таблицы биологических тестов и добавление агрегатов по документу.
+      BuildAssayTable = () as table =>
+        let
+          sourceRaw = Data[Assay_out],
+          typeMap = {
             {"assay_chembl_id", type text},
             {"document_chembl_id", type text},
             {"target_chembl_id", type text},
@@ -1952,15 +2028,97 @@ let
             {"src_id", Int64.Type},
             {"tissue_chembl_id", type text},
             {"variant_sequence", type text}
-          }
-        ),
-        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"}, MissingField.Ignore),
-        Ordered = Table.ReorderColumns(
-          #"Removed Columns",
-          List.Sort(Table.ColumnNames(#"Removed Columns"))
-        )
+          },
+          typed = TransformColumnTypesSafe(sourceRaw, typeMap),
+          withDocumentId = EnsureColumn(typed, "document_chembl_id", null, type text),
+          documentAggRaw = citations[get_assay_agg](),
+          documentAggTyped = TransformColumnTypesSafe(
+            documentAggRaw,
+            {{"document_chembl_id", type text}, {"n_assay", Int64.Type}}
+          ),
+          withAggregates = JoinAndExpand(
+            withDocumentId,
+            {"document_chembl_id"},
+            documentAggTyped,
+            {"document_chembl_id"},
+            "DocumentAssayAgg",
+            {"n_assay"},
+            {"document_assay_total"}
+          ),
+          aggregatesFinal = FinalizeAggColumns(withAggregates, {"document_assay_total"}),
+          columnsToRemove = {
+            "assay_tax_id",
+            "confidence_score",
+            "confidence_description",
+            "relationship_type",
+            "relationship_description",
+            "assay_strain"
+          },
+          sanitized = RemoveColumnsSafe(aggregatesFinal, columnsToRemove),
+          columnOrderAssay = {
+            "assay_chembl_id",
+            "document_chembl_id",
+            "target_chembl_id",
+            "assay_category",
+            "assay_group",
+            "assay_type",
+            "assay_type_description",
+            "assay_organism",
+            "assay_test_type",
+            "assay_cell_type",
+            "assay_tissue",
+            "assay_with_same_target",
+            "bao_format",
+            "bao_label",
+            "aidx",
+            "assay_classifications",
+            "assay_parameters",
+            "assay_subcellular_fraction",
+            "cell_chembl_id",
+            "description",
+            "src_assay_id",
+            "src_id",
+            "tissue_chembl_id",
+            "variant_sequence",
+            "document_assay_total"
+          },
+          finalAssay = Table.ReorderColumns(sanitized, columnOrderAssay, MissingField.Ignore)
+        in
+          finalAssay
+
+
+    in
+      [
+        BuildValidationFrame = BuildValidationFrame,
+        BuildDocumentTable = BuildDocumentTable,
+        BuildTestitemTable = BuildTestitemTable,
+        BuildAssayTable = BuildAssayTable
+      ],
+// ===================== document_validation =====================
+  data_validation_base = [
+    // ===== get_validation =====
+    // Назначение: валидация документарных записей и подготовка нормализованных атрибутов.
+    get_validation = () as table =>
+      let
+        documentSource = Data[Document_out],
+        mergedSources = DocumentInput[MergeSources](documentSource),
+        validatedRows = Validation[ValidateAll](mergedSources),
+        prepared = Modules[BuildValidationFrame](validatedRows)
       in
-        Ordered
+        prepared,
+
+    // ===== get_document =====
+    // Назначение: возврат очищенной таблицы документов для downstream-потребителей.
+    get_document = () =>
+      Modules[BuildDocumentTable](),
+    // ===== get_testitem =====
+    // Назначение: объединение тестируемых сущностей с эталонным справочником и расчёт флагов качества.
+    get_testitem = () =>
+      Modules[BuildTestitemTable](),
+    // ===== get_assay =====
+    // Назначение: типизация и очистка витрины биологических тестов.
+    get_assay = () =>
+      Modules[BuildAssayTable]()
   ],
 
   IUPHAR_int = () =>
