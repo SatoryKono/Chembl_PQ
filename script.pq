@@ -1,132 +1,288 @@
+
+// ===== Changelog =====
+// 2024-04-22 Helper refactor and parameterisation for IO and normalization.
 let
-  BasePath = "E:\github\ChEMBL_dataAcquisition\",    // пример: "E:\github\ChEMBL_dataAcquisition\"
-  SourceKind = "File",  // "File" | "SharePoint" | "Http"
-  SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
-  Paths = [
-    document_csv           = "data\input\full\document2.csv",
-    activity_csv           = "data\input\full\activity2.csv",
-    testitem_csv           = "data\input\full\testitem.csv",
-    citation_fraction_csv  = "dictionary\_curation\citation_fraction.csv",
+  // ===== Parameters =====
+  Parameters = [
+    BasePath = "E\\github\\ChEMBL_dataAcquisition\\",    // пример: "E\\github\\ChEMBL_dataAcquisition\\",
+    SourceKind = "File",  // "File" | "SharePoint" | "Http",
+    SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint",
+    Paths = [
+      document_csv = "data\\input\\full\\document2.csv",
+      activity_csv = "data\\input\\full\\activity2.csv",
+      testitem_csv = "data\\input\\full\\testitem.csv",
+      citation_fraction_csv = "dictionary\\_curation\\citation_fraction.csv",
 
-    document_csv_out       = "data\output\document\output.document_20250921.csv",
-    testitem_csv_out       = "data\output\testitem\output.testitem_all.csv",
-    assay_csv_out          = "data\output\assay\output.assay.csv",
-    target_csv_out         = "data\output\targets\output.target.csv"
+      document_csv_out = "data\\output\\document\\output.document_20250921.csv",
+      testitem_csv_out = "data\\output\\testitem\\output.testitem_all.csv",
+      assay_csv_out = "data\\output\\assay\\output.assay.csv",
+      target_csv_out = "data\\output\\targets\\output.target.csv"
+    ],
+    Encodings = [
+      Utf8 = 65001,
+      Latin1 = 1252
+    ],
+    Delimiters = [
+      Csv = ",",
+      Pipe = "|"
+    ],
+    PathEncodingKeys = [
+      document_csv = "Utf8",
+      activity_csv = "Utf8",
+      testitem_csv = "Utf8",
+      citation_fraction_csv = "Latin1",
 
+      document_csv_out = "Latin1",
+      testitem_csv_out = "Latin1",
+      assay_csv_out = "Latin1",
+      target_csv_out = "Latin1"
+    ],
+    TrimCharacters = [
+      Doi = {" ", ".", ";", ",", ":", ")", "]", "}", ">", Character.FromNumber(34), "'"}
+    ],
+    Doi = [
+      Prefixes = {"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"},
+      EncodedSeparators = {"%2f", "%2F"},
+      MinLength = 5,
+      MaxLength = 300
+    ],
+    Page = [
+      DashVariants = {"–", "—"}
+    ],
+    Whitespace = [
+      Breaks = {"#(lf)", "#(cr)", "#(tab)"},
+      Collapse = " "
+    ]
   ],
-Data=[
-Document_in=LoadCsv(Paths[document_csv], Encodings[Utf8]),
-Activity_in=LoadCsv(Paths[activity_csv], Encodings[Utf8]),
-Testitem_in =LoadCsv(Paths[testitem_csv], Encodings[Utf8]),
+  Paths = Parameters[Paths],
+  Encodings = Parameters[Encodings],
+  Delimiters = Parameters[Delimiters],
 
-
-Target_out= LoadCsv(Paths[target_csv_out], Encodings[Latin1]),
-Document_out=LoadCsv(Paths[document_csv_out], Encodings[Latin1]),
-Assay_out=LoadCsv(Paths[assay_csv_out], Encodings[Latin1]),
-Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
-],
-  Encodings = [
-    Utf8   = 65001,
-    Latin1 = 1252
-  ],
-  Delimiters = [
-    Csv = ","
-  ],
-  PathEncodingKeys = [
-    document_csv = "Utf8",
-    activity_csv = "Utf8",
-    testitem_csv = "Utf8",
-    citation_fraction_csv = "Latin1",
-
-    document_csv_out       = "Latin1",
-    testitem_csv_out      = "Latin1",     
-    assay_csv_out = "Latin1",
-    target_csv_out = "Latin1"
-  ],
-// ===== IO Helpers =====
-  BuildAbsolutePath = (pathRel as text) as text => BasePath & pathRel,
-  CheckPathExists = (pathRel as text) as logical =>
+  // ===== Providers =====
+  Providers =
     let
-      absPath = BuildAbsolutePath(pathRel),
-      exists =
-        if SourceKind = "File" then
-          let probe = try File.Contents(absPath) otherwise null in probe <> null
-        else true
+      BuildAbsolutePath = (pathRel as text) as text => Parameters[BasePath] & pathRel,
+      CheckPathExists = (pathRel as text) as logical =>
+        let
+          absPath = BuildAbsolutePath(pathRel),
+          exists =
+            if Parameters[SourceKind] = "File" then
+              let
+                probe = try File.Contents(absPath) otherwise null
+              in
+                probe <> null
+            else
+              true
+        in
+          exists
     in
-      exists,
-  LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
+      [
+        BuildAbsolutePath = BuildAbsolutePath,
+        CheckPathExists = CheckPathExists
+      ],
+  BuildAbsolutePath = Providers[BuildAbsolutePath],
+  CheckPathExists = Providers[CheckPathExists],
+
+  // ===== Loaders =====
+  Loaders =
     let
-      absPath = BuildAbsolutePath(pathRel),
-      effectiveEncoding = if encoding <> null then encoding else Encodings[Utf8],
-      content =
-        if SourceKind = "File" then
-          File.Contents(absPath)
-        else if SourceKind = "Http" then
-          Web.Contents(absPath)
-        else if SourceKind = "SharePoint" then
-          let
-            _site = SharePointSiteUrl,
-            _todo = SharePoint.Contents(_site) // TODO: навигация к файлу и выбор нужного элемента
-          in
-            error "TODO: реализовать загрузку файла через SharePoint.Contents"
-        else
-          error "Unknown SourceKind",
-      csv = Csv.Document(content, [Delimiter = Delimiters[Csv], Encoding = effectiveEncoding]),
-      tbl = Table.PromoteHeaders(csv)
+      LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
+        let
+          absPath = BuildAbsolutePath(pathRel),
+          effectiveEncoding = if encoding <> null then encoding else Encodings[Utf8],
+          content =
+            if Parameters[SourceKind] = "File" then
+              File.Contents(absPath)
+            else if Parameters[SourceKind] = "Http" then
+              Web.Contents(absPath)
+            else if Parameters[SourceKind] = "SharePoint" then
+              let
+                _site = Parameters[SharePointSiteUrl],
+                _todo = SharePoint.Contents(_site) // TODO: навигация к файлу и выбор нужного элемента
+              in
+                error "TODO: реализовать загрузку файла через SharePoint.Contents"
+            else
+              error "Unknown SourceKind",
+          csv = Csv.Document(content, [Delimiter = Delimiters[Csv], Encoding = effectiveEncoding]),
+          tbl = Table.PromoteHeaders(csv)
+        in
+          tbl
     in
-      tbl,
+      [
+        LoadCsv = LoadCsv
+      ],
+  LoadCsv = Loaders[LoadCsv],
+
+  // ===== Helpers =====
+  Helpers =
+    let
+      ToText = (value as any) as text => if value = null then "" else Text.From(value),
+      NormalizeWhitespace = (value as nullable any, optional makeLower as nullable logical) as nullable text =>
+        let
+          asText = if value = null then null else Text.Clean(Text.From(value)),
+          withBreaks =
+            if asText = null then
+              null
+            else
+              List.Accumulate(
+                Parameters[Whitespace][Breaks],
+                asText,
+                (state as text, breaker as text) => Text.Replace(state, breaker, Parameters[Whitespace][Collapse])
+              ),
+          trimmed = if withBreaks = null then null else Text.Trim(withBreaks),
+          collapsed =
+            if trimmed = null then
+              null
+            else
+              Text.Combine(List.Select(Text.Split(trimmed, " "), each _ <> ""), " "),
+          lowered = if collapsed = null then null else if makeLower = true then Text.Lower(collapsed) else collapsed,
+          result = if lowered = "" then null else lowered
+        in
+          result,
+      CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
+        let
+          normalized = NormalizeWhitespace(txt, true),
+          rawValue = if normalized = null then "" else normalized,
+          partsRaw = Text.Split(rawValue, Delimiters[Pipe]),
+          partsClean = List.Select(List.Transform(partsRaw, each NormalizeWhitespace(_, true)), each _ <> null and _ <> ""),
+          mapped =
+            if alias <> null then
+              List.Transform(partsClean, each if Record.HasFields(alias, _) then Record.Field(alias, _) else _)
+            else
+              partsClean,
+          filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
+          dedup = List.Distinct(filtered),
+          ordered = if sort = true then List.Sort(dedup) else dedup,
+          out = Text.Combine(ordered, Delimiters[Pipe])
+        in
+          out,
+      EnsureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
+        let
+          hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
+          result =
+            if hasColumn then
+              tbl
+            else if columnType <> null then
+              Table.AddColumn(tbl, columnName, each defaultValue, columnType)
+            else
+              Table.AddColumn(tbl, columnName, each defaultValue)
+        in
+          result,
+      TransformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
+        let
+          columnNames = Table.ColumnNames(tbl),
+          existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
+          transformed =
+            if culture <> null then
+              Table.TransformColumnTypes(tbl, existing, culture)
+            else
+              Table.TransformColumnTypes(tbl, existing)
+        in
+          transformed,
+      NormalizePages = (value as nullable any) as nullable text =>
+        let
+          normalized = NormalizeWhitespace(value, true),
+          replaced =
+            if normalized = null then
+              null
+            else
+              List.Accumulate(
+                Parameters[Page][DashVariants],
+                normalized,
+                (state as text, dash as text) => Text.Replace(state, dash, "-")
+              )
+        in
+          replaced,
+      TryNumber = (value as any) as nullable number =>
+        let
+          numeric =
+            if value = null then
+              null
+            else if Value.Is(value, type number) then
+              Number.From(value)
+            else
+              let
+                cleaned = NormalizeWhitespace(value, false)
+              in
+                if cleaned = null then null else (try Number.From(cleaned) otherwise try Number.FromText(cleaned) otherwise null)
+        in
+          numeric,
+      NormalizeDoi = (value as nullable any) as nullable text =>
+        let
+          normalized = NormalizeWhitespace(value, true),
+          withoutPrefixes =
+            if normalized = null then
+              null
+            else
+              List.Accumulate(
+                Parameters[Doi][Prefixes],
+                normalized,
+                (state as text, prefix as text) => Text.Replace(state, prefix, "")
+              ),
+          decoded =
+            if withoutPrefixes = null then
+              null
+            else
+              List.Accumulate(
+                Parameters[Doi][EncodedSeparators],
+                withoutPrefixes,
+                (state as text, encoded as text) => Text.Replace(state, encoded, "/")
+              ),
+          trimmed = if decoded = null then null else Text.Trim(decoded, Parameters[TrimCharacters][Doi]),
+          compact = if trimmed = null then null else Text.Replace(trimmed, " ", ""),
+          result = if compact = "" then null else compact
+        in
+          result
+    in
+      [
+        ToText = ToText,
+        NormalizeWhitespace = NormalizeWhitespace,
+        CleanPipe = CleanPipe,
+        EnsureColumn = EnsureColumn,
+        TransformColumnTypesSafe = TransformColumnTypesSafe,
+        NormalizePages = NormalizePages,
+        TryNumber = TryNumber,
+        NormalizeDoi = NormalizeDoi
+      ],
+  ToText = Helpers[ToText],
+  NormalizeWhitespace = Helpers[NormalizeWhitespace],
+  CleanPipe = Helpers[CleanPipe],
+  EnsureColumn = Helpers[EnsureColumn],
+  TransformColumnTypesSafe = Helpers[TransformColumnTypesSafe],
+  NormalizePages = Helpers[NormalizePages],
+  TryNumber = Helpers[TryNumber],
+  NormalizeDoi = Helpers[NormalizeDoi],
+
+  // ===== Modules =====
+  Data = [
+    Document_in = LoadCsv(Paths[document_csv], Encodings[Utf8]),
+    Activity_in = LoadCsv(Paths[activity_csv], Encodings[Utf8]),
+    Testitem_in = LoadCsv(Paths[testitem_csv], Encodings[Utf8]),
+
+    Target_out = LoadCsv(Paths[target_csv_out], Encodings[Latin1]),
+    Document_out = LoadCsv(Paths[document_csv_out], Encodings[Latin1]),
+    Assay_out = LoadCsv(Paths[assay_csv_out], Encodings[Latin1]),
+    Testitem_out = LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
+  ],
   ParamsSummary =
     let
       pathKeys = Record.FieldNames(Paths),
-      rows = List.Transform(pathKeys, (k) =>
-        let
-          rel = Record.Field(Paths, k),
-          encKey = if Record.HasFields(PathEncodingKeys, k) then Record.Field(PathEncodingKeys, k) else null,
-          encValue = if encKey <> null and Record.HasFields(Encodings, encKey) then Record.Field(Encodings, encKey) else null,
-          available = CheckPathExists(rel)
-        in
-          [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
+      rows = List.Transform(
+        pathKeys,
+        (k) =>
+          let
+            rel = Record.Field(Paths, k),
+            encKey = if Record.HasFields(Parameters[PathEncodingKeys], k) then Record.Field(Parameters[PathEncodingKeys], k) else null,
+            encValue = if encKey <> null and Record.HasFields(Encodings, encKey) then Record.Field(Encodings, encKey) else null,
+            available = CheckPathExists(rel)
+          in
+            [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
       ),
       header = {"path_key", "relative_path", "encoding_key", "encoding_value", "available"},
       summary = #table(header, List.Transform(rows, each {_[path_key], _[relative_path], _[encoding_key], _[encoding_value], _[available]}))
     in
       summary,
-// ===== Helpers =====
-  ToText = (x as any) as text => if x = null then "" else Text.From(x),
-  CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
-    let
-      raw = Text.Lower(Text.Trim(ToText(txt))),
-      parts0 = List.Select(List.Transform(Text.Split(raw, "|"), each Text.Trim(_)), each _ <> ""),
-      mapped = List.Transform(parts0, each if alias <> null and Record.HasFields(alias, _) then Record.Field(alias, _) else _),
-      filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
-      dedup = List.Distinct(filtered),
-      ordered = if sort = true then List.Sort(dedup) else dedup,
-      out = Text.Combine(ordered, "|")
-    in
-      out,
-  TransformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
-    let
-      columnNames = Table.ColumnNames(tbl),
-      existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
-      transformed =
-        if culture <> null then
-          Table.TransformColumnTypes(tbl, existing, culture)
-        else
-          Table.TransformColumnTypes(tbl, existing)
-    in
-      transformed,
-  EnsureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
-    let
-      hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
-      result =
-        if hasColumn then
-          tbl
-        else if columnType <> null then
-          Table.AddColumn(tbl, columnName, each defaultValue, columnType)
-        else
-          Table.AddColumn(tbl, columnName, each defaultValue)
-    in
-      result,
+
 // ===================== document_input =====================
   citations = [
     get_reference = () => Data[Document_in],
@@ -135,7 +291,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         getReferenceThresholds = () as table =>
           let
             t0 = LoadCsv(Paths[citation_fraction_csv], Encodings[Latin1]),
-            t1 = Table.TransformColumnTypes(
+            t1 = TransformColumnTypesSafe(
               t0,
               {
                 {"N", Int64.Type},
@@ -144,12 +300,12 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
                 {"p_value_at_threshold", type number}
               }
             ),
-            t2 = Table.RemoveColumns(t1, List.Difference(Table.ColumnNames(t1), {"N", "K_min_significant"}))
+            t2 = Table.RemoveColumns(t1, List.Difference(Table.ColumnNames(t1), {"N", "K_min_significant"}), MissingField.Ignore)
           in
             t2,
         getActivityAgg = (src as table) as table =>
           let
-            t = Table.Group(Table.SelectColumns(src, {"document_chembl_id"}), {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}})
+            t = Table.Group(Table.SelectColumns(src, {"document_chembl_id"}, MissingField.Ignore), {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}})
           in
             t,
         getAssayAgg = (src as table) as table =>
@@ -168,24 +324,24 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
                   t1
               else if hasDoc then
                 let
-                  docs = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id"}), {"document_chembl_id"}),
+                  docs = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id"}, MissingField.Ignore), {"document_chembl_id"}),
                   withZeros = Table.AddColumn(docs, "n_assay", each 0, Int64.Type)
                 in
                   withZeros
               else
-                Table.TransformColumnTypes(#table({"document_chembl_id", "n_assay"}, {}), {{"n_assay", Int64.Type}}),
-            typed = Table.TransformColumnTypes(result, {{"n_assay", Int64.Type}}, "en-US")
+                TransformColumnTypesSafe(#table({"document_chembl_id", "n_assay"}, {}), {{"n_assay", Int64.Type}}),
+            typed = TransformColumnTypesSafe(result, {{"n_assay", Int64.Type}}, "en-US")
           in
             typed,
         getTestItemAgg = (src as table) as table =>
           let
-            t0 = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id", "molecule_chembl_id"}), {"molecule_chembl_id"}),
+            t0 = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id", "molecule_chembl_id"}, MissingField.Ignore), {"molecule_chembl_id"}),
             t1 = Table.Group(t0, {"document_chembl_id"}, {{"n_testitem", each Table.RowCount(_), Int64.Type}})
           in
             t1,
         getCitationsAgg = (src as table) as table =>
           let
-            t0 = Table.SelectRows(Table.SelectColumns(src, {"document_chembl_id", "is_citation"}), each [is_citation] = true),
+            t0 = Table.SelectRows(Table.SelectColumns(src, {"document_chembl_id", "is_citation"}, MissingField.Ignore), each [is_citation] = true),
             t1 = Table.Group(t0, {"document_chembl_id"}, {{"citations", each Table.RowCount(_), Int64.Type}})
           in
             t1,
@@ -208,14 +364,14 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         AggCit = getCitationsAgg(ActivityPrepared),
         RA = Table.RenameColumns(AggActivity, {{"document_chembl_id", "doc_id"}}),
         J1 = Table.Join(AggCit, "document_chembl_id", RA, "doc_id", JoinKind.LeftOuter),
-        J1c = Table.RemoveColumns(J1, {"doc_id"}),
+        J1c = Table.RemoveColumns(J1, {"doc_id"}, MissingField.Ignore),
         RS = Table.RenameColumns(AggAssay, {{"document_chembl_id", "doc_id"}}),
         J2 = Table.Join(J1c, "document_chembl_id", RS, "doc_id", JoinKind.LeftOuter),
-        J2c = Table.RemoveColumns(J2, {"doc_id"}),
+        J2c = Table.RemoveColumns(J2, {"doc_id"}, MissingField.Ignore),
         RT = Table.RenameColumns(AggTest, {{"document_chembl_id", "doc_id"}}),
         J3 = Table.Join(J2c, "document_chembl_id", RT, "doc_id", JoinKind.LeftOuter),
-        J3c = Table.RemoveColumns(J3, {"doc_id"}),
-        J4 = Table.TransformColumnTypes(J3c, {{"n_activity", Int64.Type}, {"citations", Int64.Type}, {"n_assay", Int64.Type}, {"n_testitem", Int64.Type}}),
+        J3c = Table.RemoveColumns(J3, {"doc_id"}, MissingField.Ignore),
+        J4 = TransformColumnTypesSafe(J3c, {{"n_activity", Int64.Type}, {"citations", Int64.Type}, {"n_assay", Int64.Type}, {"n_testitem", Int64.Type}}),
         J5 = Table.ReplaceValue(J4, null, 0, Replacer.ReplaceValue, {"n_activity", "citations", "n_assay", "n_testitem"}),
         Ref = getReferenceThresholds(),
         RefR = Table.RenameColumns(Ref, {{"N", "N_key"}}),
@@ -282,12 +438,13 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "ChEMBL.pubmed_id",
             "ChEMBL.authors",
             "ChEMBL.source"
-          }
+          },
+          MissingField.Ignore
         ),
         Repl0 = Table.ReplaceValue(Removed, null, 0, Replacer.ReplaceValue, {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"}),
-        CastTxt = Table.TransformColumnTypes(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
+        CastTxt = TransformColumnTypesSafe(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
         LowerAux = Table.TransformColumns(
-          Table.TransformColumnTypes(
+          TransformColumnTypesSafe(
             CastTxt,
             {
               {"PubMed.YearCompleted", type text},
@@ -319,7 +476,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           Replacer.ReplaceValue,
           {"PubMed.YearCompleted", "PubMed.MonthCompleted", "PubMed.DayCompleted", "PubMed.YearRevised", "PubMed.MonthRevised", "PubMed.DayRevised"}
         ),
-        VolIssTxt = Table.TransformColumnTypes(
+        VolIssTxt = TransformColumnTypesSafe(
           Fill0,
           {
             {"PubMed.Volume", type text},
@@ -452,7 +609,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "ChEMBL.source"
           }
         ),
-        Cast = Table.TransformColumnTypes(
+        Cast = TransformColumnTypesSafe(
           Removed,
           {
             {"scholar.ExternalIds", type text},
@@ -531,9 +688,10 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "ChEMBL.pubmed_id",
             "ChEMBL.source",
             "ChEMBL.journal"
-          }
+          },
+          MissingField.Ignore
         ),
-        Cast = Table.TransformColumnTypes(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
+        Cast = TransformColumnTypesSafe(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
         Ren1 = Table.RenameColumns(Cast, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
         Ren2 = Table.RenameColumns(Ren1, {{"ChEMBL.title", "title"}, {"ChEMBL.document_chembl_id", "document_chembl_id"}, {"ChEMBL.abstract", "abstract"}}),
         Lower = Table.TransformColumns(Ren2, {{"DOI", Text.Lower}, {"ChEMBL.doi", Text.Lower}}),
@@ -560,17 +718,17 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           }
         ),
         Pages = Table.CombineColumns(
-          Table.TransformColumnTypes(Lower2, {{"ChEMBL.first_page", type text}, {"ChEMBL.last_page", type text}}, "en-US"),
+          TransformColumnTypesSafe(Lower2, {{"ChEMBL.first_page", type text}, {"ChEMBL.last_page", type text}}, "en-US"),
           {"ChEMBL.first_page", "ChEMBL.last_page"},
           Combiner.CombineTextByDelimiter("-", QuoteStyle.None),
           "page"
         ),
-        Removed2 = Table.RemoveColumns(Pages, {"DOI"})
+        Removed2 = Table.RemoveColumns(Pages, {"DOI"}, MissingField.Ignore)
       in
         Removed2,
     _OpenAlex = (SourseOpenAlex as table) =>
       let
-        Cast = Table.TransformColumnTypes(SourseOpenAlex, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
+        Cast = TransformColumnTypesSafe(SourseOpenAlex, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
         Removed = Table.RemoveColumns(
           Cast,
           {
@@ -626,7 +784,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "crossref.Subtitle",
             "crossref.Subject",
             "crossref.Error"
-          }
+          },
+          MissingField.Ignore
         ),
         Ren = Table.RenameColumns(Removed, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
         Flag = Table.AddColumn(Ren, "same_doi", each [DOI] = [OpenAlex.DOI], type logical),
@@ -638,7 +797,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             {"OpenAlex.MeshDescriptors", "MeSH.descriptors"}
           }
         ),
-        Removed2 = Table.RemoveColumns(Ren1, {"OpenAlex.MeshQualifiers"}),
+        Removed2 = Table.RemoveColumns(Ren1, {"OpenAlex.MeshQualifiers"}, MissingField.Ignore),
         Ren2 = Table.RenameColumns(Removed2, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
         Lower = Table.TransformColumns(
           Ren2,
@@ -649,13 +808,13 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             {"DOI", Text.Lower}
           }
         ),
-        Removed3 = Table.RemoveColumns(Lower, {"DOI"}),
+        Removed3 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
         Ren3 = Table.RenameColumns(Removed3, {{"OpenAlex.DOI", "OpenAlex.doi"}})
       in
         Ren3,
     _crossref = (Soursecrossref as table) =>
       let
-        Cast = Table.TransformColumnTypes(
+        Cast = TransformColumnTypesSafe(
           Soursecrossref,
           {
             {"PubMed.PMID", Int64.Type},
@@ -724,11 +883,12 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "OpenAlex.MeshQualifiers",
             "OpenAlex.Id",
             "OpenAlex.Error"
-          }
+          },
+          MissingField.Ignore
         ),
         Ren1 = Table.RenameColumns(Removed, {{"crossref.Type", "publication_type"}, {"crossref.Title", "title"}, {"crossref.Error", "Error"}}),
         Lower = Table.TransformColumns(Ren1, {{"title", Text.Lower}}),
-        Removed2 = Table.RemoveColumns(Lower, {"DOI"}),
+        Removed2 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
         Ren2 = Table.RenameColumns(Removed2, {{"crossref.DOI", "crossref.doi"}})
       in
         Ren2,
@@ -740,7 +900,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         SourceScholar = _scholar(Source1),
         SourceChEMBL = _ChEMBL(Source1),
         SourceOpenAlex = _OpenAlex(Source1),
-        SourceCrossRef =  Table.TransformColumnTypes(Table.DuplicateColumn(_crossref(Source1), "PMID", "crossref.PMID"),{{"crossref.PMID", type text}}),
+        SourceCrossRef =  TransformColumnTypesSafe(Table.DuplicateColumn(_crossref(Source1), "PMID", "crossref.PMID"),{{"crossref.PMID", type text}}),
         J1 = Table.NestedJoin(SourcePubMed, {"PMID"}, SourceChEMBL, {"PMID"}, "ChEMBL"),
         E1 = Table.ExpandTableColumn(
           J1,
@@ -785,28 +945,12 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
 // ===================== validation =====================
   validation =
     let
-      NormalizeText = (t as nullable text) as nullable text => if t = null then null else Text.Lower(Text.Trim(Text.Clean(t))),
-      CleanDOI = (t as nullable text) as nullable text =>
+      NormalizeText = (value as nullable any) as nullable text => NormalizeWhitespace(value, true),
+      IsLikelyDOI = (d as nullable any) as logical =>
         let
-          x0 = if t = null then null else Text.Lower(Text.Trim(Text.Clean(t))),
-          x1 = if x0 = null then null else List.Accumulate({"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"}, x0, (state, pref) => Text.Replace(state, pref, "")),
-          x2 = if x1 = null then null else Text.Replace(Text.Replace(x1, "%2f", "/"), "%2F", "/"),
-          trimChars = {" ", ".", ";", ",", ":", ")", "]", "}", ">", Character.FromNumber(34), "'"},
-          x3 = if x2 = null then null else Text.Trim(x2, trimChars),
-          x4 = if x3 = null then null else Text.Replace(x3, " ", "")
+          s = NormalizeDoi(d)
         in
-          if x4 = "" then null else x4,
-      IsLikelyDOI = (d as nullable text) as logical =>
-        let
-          s = CleanDOI(d)
-        in
-          s <> null and Text.StartsWith(s, "10.") and Text.Contains(s, "/") and not Text.Contains(s, " ") and Text.Length(s) >= 5 and Text.Length(s) <= 300,
-      NormalizePages = (t as nullable text) as nullable text => if t = null then null else Text.Replace(Text.Replace(NormalizeText(t), "–", "-"), "—", "-"),
-      TryNumber = (t as any) as nullable number =>
-        let
-          n = try Number.From(t) otherwise try Number.FromText(Text.From(t)) otherwise null
-        in
-          n,
+          s <> null and Text.StartsWith(s, "10.") and Text.Contains(s, "/") and Text.Length(s) >= Parameters[Doi][MinLength] and Text.Length(s) <= Parameters[Doi][MaxLength],
       ListMode = (lst as list) as record =>
         let
           nonNull = List.RemoveNulls(lst),
@@ -815,23 +959,23 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           top = if List.Count(sorted) = 0 then [value = null, count = 0] else sorted{0}
         in
           top,
-      InvalidDOI = (pm as nullable text, chembl as nullable text, scholar as nullable text, crossref as nullable text, openalex as nullable text) as record =>
+      InvalidDOI = (pm as nullable any, chembl as nullable any, scholar as nullable any, crossref as nullable any, openalex as nullable any) as record =>
         let
           pm_raw = pm,
           ch_raw = chembl,
           sc_raw = scholar,
           cr_raw = crossref,
           oa_raw = openalex,
-          pm_clean = CleanDOI(pm_raw),
-          ch_clean = CleanDOI(ch_raw),
-          sc_clean = CleanDOI(sc_raw),
-          cr_clean = CleanDOI(cr_raw),
-          oa_clean = CleanDOI(oa_raw),
-          pm_valid = IsLikelyDOI(pm_clean),
-          ch_valid = IsLikelyDOI(ch_clean),
-          sc_valid = IsLikelyDOI(sc_clean),
-          cr_valid = IsLikelyDOI(cr_clean),
-          oa_valid = IsLikelyDOI(oa_clean),
+          pm_clean = NormalizeDoi(pm_raw),
+          ch_clean = NormalizeDoi(ch_raw),
+          sc_clean = NormalizeDoi(sc_raw),
+          cr_clean = NormalizeDoi(cr_raw),
+          oa_clean = NormalizeDoi(oa_raw),
+          pm_valid = IsLikelyDOI(pm_raw),
+          ch_valid = IsLikelyDOI(ch_raw),
+          sc_valid = IsLikelyDOI(sc_raw),
+          cr_valid = IsLikelyDOI(cr_raw),
+          oa_valid = IsLikelyDOI(oa_raw),
           peers_clean = List.RemoveNulls({ch_clean, sc_clean, cr_clean, oa_clean}),
           peers_valid = List.RemoveNulls(
             List.Transform(
@@ -902,46 +1046,54 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             openalex_doi_raw = oa_raw,
             peers_valid_distinct = peers_valid_distinct
           ],
-      TitleCheck = (pm as nullable text, chembl as nullable text, crossref as nullable text) as record =>
+      TitleCheck = (pm as nullable any, chembl as nullable any, crossref as nullable any) as record =>
         let
           pmN = NormalizeText(pm),
           chN = NormalizeText(chembl),
           crN = NormalizeText(crossref),
           same = if pmN = null then 0 else List.Count(List.Select(List.RemoveNulls({chN, crN}), each _ = pmN)),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else if crossref <> null and Text.Length(Text.Trim(crossref)) > 0 then crossref else chembl
+          pmText = NormalizeWhitespace(pm, false),
+          crText = NormalizeWhitespace(crossref, false),
+          newv = if pmText <> null then pm else if crText <> null then crossref else chembl
         in
           [same_count = same, new_title = newv],
-      AbstractCheck = (pm as nullable text, chembl as nullable text) as record =>
+      AbstractCheck = (pm as nullable any, chembl as nullable any) as record =>
         let
           pmN = NormalizeText(pm),
           chN = NormalizeText(chembl),
           same = if pmN = null then 0 else (if chN = pmN then 1 else 0),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else chembl
+          pmText = NormalizeWhitespace(pm, false),
+          newv = if pmText <> null then pm else chembl
         in
           [same_count = same, new_abstract = newv],
-      PagesCheck = (pm as nullable text, chembl as nullable text) as record =>
+      PagesCheck = (pm as nullable any, chembl as nullable any) as record =>
         let
           pmN = NormalizePages(pm),
           chN = NormalizePages(chembl),
           same = if pmN = null then 0 else (if chN = pmN then 1 else 0),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else chembl
+          pmText = NormalizeWhitespace(pm, false),
+          newv = if pmText <> null then pm else chembl
         in
           [same_count = same, new_page = newv],
       VolumeCheck = (pm as any, chembl as any) as record =>
         let
-          pmNum = TryNumber(pm),
-          chNum = TryNumber(chembl),
+          pmText = NormalizeWhitespace(pm, false),
+          chText = NormalizeWhitespace(chembl, false),
+          pmNum = TryNumber(pmText),
+          chNum = TryNumber(chText),
           same = if pmNum = null then 0 else (if chNum <> null and chNum = pmNum then 1 else 0),
-          invalid_volume =(pm <> null and pm <> "" and pmNum = null) or (chembl <> null and chembl <>"" and chNum = null) or  (pm <> null and pm <> "" and chembl <> null and chembl <>"" and pmNum<> chNum),
+          invalid_volume = (pmText <> null and pmNum = null) or (chText <> null and chNum = null) or (pmNum <> null and chNum <> null and pmNum <> chNum),
           newv = if pmNum <> null then pmNum else chNum
         in
           [same_count = same, new_volume = newv, invalid_volume = invalid_volume],
       IssueCheck = (pm as any, chembl as any) as record =>
         let
-          pmNum = TryNumber(pm),
-          chNum = TryNumber(chembl),
+          pmText = NormalizeWhitespace(pm, false),
+          chText = NormalizeWhitespace(chembl, false),
+          pmNum = TryNumber(pmText),
+          chNum = TryNumber(chText),
           same = if pmNum = null then 0 else (if chNum <> null and chNum = pmNum then 1 else 0),
-          invalid_issue = (pm <> null and pm <> "" and pmNum = null) or (chembl <> null and chembl <>"" and chNum = null) or  (pm <> null and pm <> "" and chembl <> null and chembl <>"" and pmNum<> chNum),
+          invalid_issue = (pmText <> null and pmNum = null) or (chText <> null and chNum = null) or (pmNum <> null and chNum <> null and pmNum <> chNum),
           newv = if pmNum <> null then pmNum else chNum
         in
           [same_count = same, new_issue = newv, invalid_issue = invalid_issue],
@@ -1035,7 +1187,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
     in
       [
         NormalizeText = NormalizeText,
-        CleanDOI = CleanDOI,
+        NormalizeDoi = NormalizeDoi,
         IsLikelyDOI = IsLikelyDOI,
         NormalizePages = NormalizePages,
         TryNumber = TryNumber,
@@ -1062,8 +1214,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           each ([consensus_support] <= 2) or ([invalid_issue] = true) or ([invalid_volume] = true),
           type logical
         ),
-        DropOriginals = Table.RemoveColumns(AddInvalid, {"title", "abstract", "volume", "issue", "page"}),
-        DropNoise = Table.RemoveColumns(DropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}),
+        DropOriginals = Table.RemoveColumns(AddInvalid, {"title", "abstract", "volume", "issue", "page"}, MissingField.Ignore),
+        DropNoise = Table.RemoveColumns(DropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}, MissingField.Ignore),
         RenameNew = Table.RenameColumns(
           DropNoise,
           {
@@ -1122,7 +1274,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "crossref_doi_raw",
             "openalex_doi_raw",
             "peers_valid_distinct"
-          }
+          },
+          MissingField.Ignore
         )
       in
         DropVerbose,
@@ -1130,7 +1283,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
     get_document = () =>
       let
         Source = get_validation(),
-        #"Changed Type" = Table.TransformColumnTypes(Source, {{"volume", type text}, {"issue", type text}}),
+        #"Changed Type" = TransformColumnTypesSafe(Source, {{"volume", type text}, {"issue", type text}}),
         #"Removed Columns" = Table.RemoveColumns(
           #"Changed Type",
           {
@@ -1150,7 +1303,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "invalid_volume",
             "invalid_issue",
             "PMID_for_validation"
-          }
+          },
+          MissingField.Ignore
         ),
         #"Renamed Columns" = Table.RenameColumns(#"Removed Columns", {{"abstract_", "abstract"}, {"_title", "title"}}),
         #"Reordered Columns1" = Table.ReorderColumns(
@@ -1250,7 +1404,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "volume",
             "issue",
             "page"
-          }
+          },
+          MissingField.Ignore
         ),
         #"Reordered Columns2" = Table.ReorderColumns(
           #"Removed Columns2",
@@ -1281,7 +1436,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           },
           MissingField.Ignore
         ),
-        #"Removed Columns3" = Table.RemoveColumns(#"Reordered Columns2", {"crossref.crossref.Subtype", "crossref.crossref.Subtitle", "crossref.crossref.Subject"}),
+        #"Removed Columns3" = Table.RemoveColumns(#"Reordered Columns2", {"crossref.crossref.Subtype", "crossref.crossref.Subtitle", "crossref.crossref.Subject"}, MissingField.Ignore),
         #"Reordered Columns4" = Table.ReorderColumns(
           #"Removed Columns3",
           {
@@ -1344,7 +1499,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             {"publication_type", "PubMed.publication_type"}
           }
         ),
-        #"1Changed Type1" = Table.TransformColumnTypes(#"Renamed Columns1", {{"PMID", type text}}),
+        #"1Changed Type1" = TransformColumnTypesSafe(#"Renamed Columns1", {{"PMID", type text}}),
         a = citations[get_reference](),
         #"1Merged Queries" = Table.NestedJoin(#"1Changed Type1", {"PMID"}, a, {"pubmed_id"}, "NewColumn"),
         #"1Expanded NewColumn" = Table.ExpandTableColumn(
@@ -1354,8 +1509,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           {"review", "document_contains_external_links", "is_experimental_doc"}
         ),
         #"1Replaced Value" = Table.ReplaceValue(#"1Expanded NewColumn", "", 0, Replacer.ReplaceValue, {"review"}),
-        #"1Changed Type2" = Table.TransformColumnTypes(#"1Replaced Value", {{"review", Int64.Type}}),
-        #"1Changed Type" = Table.TransformColumnTypes(#"1Changed Type2", {{"review", type logical}}),
+        #"1Changed Type2" = TransformColumnTypesSafe(#"1Replaced Value", {{"review", Int64.Type}}),
+        #"1Changed Type" = TransformColumnTypesSafe(#"1Changed Type2", {{"review", type logical}}),
         WithDocumentId =
           if List.Contains(Table.ColumnNames(#"1Changed Type"), "ChEMBL.document_chembl_id") then
             #"1Changed Type"
@@ -1398,9 +1553,10 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "citations",
             "n_assay",
             "n_testitem"
-          }
+          },
+          MissingField.Ignore
         ),
-        Typed = Table.TransformColumnTypes(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
+        Typed = TransformColumnTypesSafe(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
         Drop_Journalish = {"journal-article", "journal article", "article", "journal"},
         Drop_Supportish =
           {
@@ -1426,7 +1582,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         Alias_OpenAlexXrefType = [#"journal-article" = null, article = null],
         Alias_OpenAlexGenre = [article = null, #"0" = null],
         Alias_CrossrefPubType = [#"journal-article" = null, article = null],
-        ToTextAll = Table.TransformColumnTypes(
+        ToTextAll = TransformColumnTypesSafe(
           Typed,
           {
             {"PubMed.publication_type", type text},
@@ -1525,7 +1681,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
               Number.From([review]) * 2
             ) / [n_responces] > 0.335
         ),
-        #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1", {"review"}),
+        #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1", {"review"}, MissingField.Ignore),
         #"Renamed Columns3" = Table.RenameColumns(#"Removed Columns1", {{"updated_review", "review"}}),
         #"Added Custom3" = Table.AddColumn(#"Renamed Columns3", "is_experimental", each not [review])
       in
@@ -1535,7 +1691,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         get_reference = () =>
           let
             Source =Data[Testitem_in],
-            #"Changed Type" = Table.TransformColumnTypes(
+            #"Changed Type" = TransformColumnTypesSafe(
               Source,
               {
                 {"molecule_chembl_id", type text},
@@ -1562,7 +1718,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1", """", "|", Replacer.ReplaceText, {"synonyms"}),
         #"Lowercased Text1" = Table.TransformColumns(#"Replaced Value2", {{"pref_name", Text.Lower}}),
         #"Added to Column" = Table.TransformColumns(#"Lowercased Text1", {{"nstereo", each List.Sum({_, -1}), Int64.Type}}),
-        #"Changed Type1" = Table.TransformColumnTypes(#"Added to Column", {{"nstereo", type logical}}),
+        #"Changed Type1" = TransformColumnTypesSafe(#"Added to Column", {{"nstereo", type logical}}),
         #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"nstereo", "unknown_chirality"}}),
         #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> ""))
       in
@@ -1570,7 +1726,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
     get_assay = () =>
       let
         Source = Data[Assay_out],
-        #"Changed Type" = Table.TransformColumnTypes(
+        #"Changed Type" = TransformColumnTypesSafe(
           Source,
           {
             {"assay_chembl_id", type text},
@@ -1605,7 +1761,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             {"variant_sequence", type text}
           }
         ),
-        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"})
+        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"}, MissingField.Ignore)
       in
         #"Removed Columns"
   ],
@@ -1785,7 +1941,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
     let
       keep = List.Difference(Table.ColumnNames(tbl), cols)
     in
-      Table.SelectColumns(tbl, keep),
+      Table.SelectColumns(tbl, keep, MissingField.Ignore),
   SplitPipesToList = (x as any) as list =>
     let
       txt = ToText(x),
@@ -1797,7 +1953,11 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
 // Cellularity rules (офлайн)
 // =====================================================
   Cellularity_ = [
-    Normalize = (s as nullable text) as text => if s = null then "" else Text.Lower(Text.Trim(s)),
+    Normalize = (s as nullable any) as text =>
+      let
+        normalized = NormalizeWhitespace(s, true)
+      in
+        if normalized = null then "" else normalized,
     UnicellPhyla =
       {
         "ciliophora",
@@ -1901,7 +2061,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         T3 = Table.TransformColumns(T2, {{"raw", each List.Select(SplitPipesToList(_), each _ <> ""), type list}}),
         T4 = Table.ExpandListColumn(T3, "raw"),
         T5 = Table.SplitColumn(T4, "raw", Splitter.SplitTextByEachDelimiter({"["}, null, false), {"token", "posRaw"}),
-        T6 = Table.TransformColumns(T5, {{"token", each Text.Lower(Text.Trim(ToText(_))), type text}, {"posRaw", each Text.Trim(Text.Replace(ToText(_), "]", "")), type text}}),
+        T6 = Table.TransformColumns(T5, {{"token", each let v = NormalizeWhitespace(_, true) in if v = null then "" else v, type text}, {"posRaw", each Text.Trim(Text.Replace(ToText(_), "]", "")), type text}}),
         T7 = Table.TransformColumns(T6, {{"token", each mapToken(_), type text}}),
         T8 = if keepPos = null or keepPos = true then Table.AddColumn(T7, "AA", each [token] & [posRaw], type text) else Table.RenameColumns(T7, {{"token", "AA"}}),
         G = Table.Group(T8, {"Index"}, {{"Count", each Table.RowCount(_), Int64.Type}, {"aa_list", each Text.Combine(List.RemoveNulls([AA]), "|"), type text}})
@@ -1932,7 +2092,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             glutamine = "Q",
             proline = "P"
           ],
-        key = Text.Lower(Text.Trim(s)),
+        key = NormalizeWhitespace(s, true),
         out = if Record.HasFields(repl, key) then Record.Field(repl, key) else key
       in
         out
@@ -1944,7 +2104,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
   target = [
     isoform = (Source as table) as table =>
       let
-        T1 = Table.SelectColumns(Source, {"isoform_synonyms", "isoform_names", "isoform_ids", "uniprot_id_primary", "target_chembl_id"}),
+        T1 = Table.SelectColumns(Source, {"isoform_synonyms", "isoform_names", "isoform_ids", "uniprot_id_primary", "target_chembl_id"}, MissingField.Ignore),
         T2 = Table.TransformColumns(T1, {{"isoform_synonyms", each Text.Lower(ToText(_)), type text}, {"isoform_names", each Text.Lower(ToText(_)), type text}}),
         T3 = Table.TransformColumns(T2, {{"isoform_synonyms", each SplitPipesToList(_), type list}, {"isoform_names", each SplitPipesToList(_), type list}, {"isoform_ids", each SplitPipesToList(_), type list}}),
         MakeTriples = (names as list, ids as list, syns as list) as list =>
@@ -1975,9 +2135,9 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
               variants,
           type list
         ),
-        Names = Table.SelectColumns(Expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}),
+        Names = Table.SelectColumns(Expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}, MissingField.Ignore),
         NamesClean = Table.SelectRows(Table.TransformColumns(Names, {{"name", each Text.Trim(ToText(_)), type text}}), each [name] <> "" and [name] <> "n/a" and [name] <> "none"),
-        Syns = Table.SelectColumns(WithTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}),
+        Syns = Table.SelectColumns(WithTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}, MissingField.Ignore),
         SynsExploded = Table.ExpandListColumn(Syns, "tokens"),
         SynsClean = Table.RenameColumns(Table.SelectRows(Table.TransformColumns(SynsExploded, {{"tokens", each Text.Trim(ToText(_)), type text}}), each [tokens] <> "" and [tokens] <> "n/a" and [tokens] <> "none"), {{"tokens", "name"}}),
         Combined = Table.Combine({NamesClean, SynsClean}),
@@ -2275,7 +2435,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder}), MissingField.Ignore),
         drop2 =
           {
             "secondaryAccessions",
@@ -2313,12 +2473,12 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         Out,
     organism = (Source as table) as table =>
       let
-        base = Table.SelectColumns(Source, {"target_chembl_id", "uniprot_id_primary", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers"}),
+        base = Table.SelectColumns(Source, {"target_chembl_id", "uniprot_id_primary", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers"}, MissingField.Ignore),
         lower = Table.TransformColumns(base, {{"lineage_superkingdom", Text.Lower, type text}, {"lineage_phylum", Text.Lower, type text}, {"lineage_class", Text.Lower, type text}}),
         withCell = Cellularity_[AddCellularitySmart](lower, "taxon_id", "lineage_superkingdom", "lineage_class"),
         ecMainList = Table.AddColumn(withCell, "ec_major_list", each let items = SplitPipesToList([reaction_ec_numbers]) in List.Distinct(List.Transform(items, each if Text.Contains(_, ".") then Text.Split(_, "."){0} else _)), type list),
         multifn = Table.AddColumn(ecMainList, "multifunctional_enzyme", each List.Count([ec_major_list]) > 1, type logical),
-        out = Table.RemoveColumns(multifn, {"ec_major_list"})
+        out = Table.RemoveColumns(multifn, {"ec_major_list"}, MissingField.Ignore)
       in
         out,
 
@@ -2425,7 +2585,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keep})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keep}), MissingField.Ignore),
         R2 = Table.TransformColumns(R1, {{"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "")), type text}, {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "") in if s = "[]" or s = "" then null else s, type nullable text}}),
         TComp = try Table.SplitColumn(R2, "target_components", Splitter.SplitTextByEachDelimiter({"""component_description"": """}, QuoteStyle.None, false), {"tc1", "tc2"}) otherwise R2,
         TComp2 = try Table.SplitColumn(TComp, "tc2", Splitter.SplitTextByEachDelimiter({""", """}, QuoteStyle.None, false), {"tc2a", "tc2b"}) otherwise TComp,
@@ -2543,7 +2703,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder}), MissingField.Ignore),
         R2 = RemoveIfExists(R1, {"uniprot_last_update", "uniprot_version", "pipeline_version", "timestamp_utc", "geneName", "xref_iuphar", "gtop_target_id", "GuidetoPHARMACOLOGY", "sequence_length", "features_transmembrane", "features_topology", "molecular_function", "cellular_component", "subcellular_location", "topology"}),
         Jn = Table.NestedJoin(R2, {"target_chembl_id", "uniprot_id_primary"}, name(Source), {"target_chembl_id", "uniprot_id_primary"}, "nm", JoinKind.LeftOuter),
         Ex = Table.ExpandTableColumn(Jn, "nm", {"recommended_name", "gene_name", "synonyms"}, {"recommended_name", "gene_name", "synonyms"}),
@@ -2616,7 +2776,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         NormalizeTable19 = () as table =>
           let
             T0 = table19(),
-            T1 = Table.TransformColumnTypes(
+            T1 = TransformColumnTypesSafe(
               T0,
               {
                 {"ec", Int64.Type},
@@ -2687,7 +2847,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             F0 = Table.SelectRows(M1, each ToText([iuphar_family_id]) = "N/A" and ToText([cellularity]) = "multicellular" and [ec_number] <> null),
             S2 = Table.SplitColumn(F0, "ec_number", Splitter.SplitTextByEachDelimiter({"."}, null, false), {"ec_major", "ec_minor"}),
             F1 = Table.SelectRows(S2, each [ec_major] <> "3"),
-            T = Table.TransformColumnTypes(F1, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
+            T = TransformColumnTypesSafe(F1, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
             J = Table.NestedJoin(T, {"ec_major"}, T19, {"ec"}, "T19", JoinKind.LeftOuter),
             Jnd = RemoveIfExists(J, IupharIdCols),
             E = Table.ExpandTableColumn(Jnd, "T19", IupharIdCols, IupharIdCols),
