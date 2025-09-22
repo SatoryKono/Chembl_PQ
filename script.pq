@@ -782,186 +782,260 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         E4
   ],
 
-// ===================== validation =====================
-  validation =
+// =====================================================
+// Modules (validation)
+// =====================================================
+  Validation =
     let
-      NormalizeText = (t as nullable text) as nullable text => if t = null then null else Text.Lower(Text.Trim(Text.Clean(t))),
-      CleanDOI = (t as nullable text) as nullable text =>
+      // ===== Normalization helpers =====
+      NormalizeText = (value as any) as nullable text =>
         let
-          x0 = if t = null then null else Text.Lower(Text.Trim(Text.Clean(t))),
-          x1 = if x0 = null then null else List.Accumulate({"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"}, x0, (state, pref) => Text.Replace(state, pref, "")),
-          x2 = if x1 = null then null else Text.Replace(Text.Replace(x1, "%2f", "/"), "%2F", "/"),
+          asText = if value = null then null else ToText(value),
+          cleaned = if asText = null then null else Text.Clean(asText),
+          trimmed = if cleaned = null then null else Text.Trim(cleaned),
+          lowered = if trimmed = null or trimmed = "" then null else Text.Lower(trimmed)
+        in
+          lowered,
+      NormalizeDoi = (value as any) as nullable text =>
+        let
+          normalized = NormalizeText(value),
+          prefixes = {"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"},
+          withoutPrefixes =
+            if normalized = null then
+              null
+            else
+              List.Accumulate(prefixes, normalized, (state, pref) => if Text.StartsWith(state, pref) then Text.Replace(state, pref, "") else state),
+          decoded = if withoutPrefixes = null then null else Text.Replace(Text.Replace(withoutPrefixes, "%2f", "/"), "%2F", "/"),
           trimChars = {" ", ".", ";", ",", ":", ")", "]", "}", ">", Character.FromNumber(34), "'"},
-          x3 = if x2 = null then null else Text.Trim(x2, trimChars),
-          x4 = if x3 = null then null else Text.Replace(x3, " ", "")
+          trimmed = if decoded = null then null else Text.Trim(decoded, trimChars),
+          compact = if trimmed = null then null else Text.Replace(trimmed, " ", "")
         in
-          if x4 = "" then null else x4,
-      IsLikelyDOI = (d as nullable text) as logical =>
+          if compact = null or compact = "" then null else compact,
+      IsLikelyDoi = (value as any) as logical =>
         let
-          s = CleanDOI(d)
+          candidate = NormalizeDoi(value)
         in
-          s <> null and Text.StartsWith(s, "10.") and Text.Contains(s, "/") and not Text.Contains(s, " ") and Text.Length(s) >= 5 and Text.Length(s) <= 300,
-      NormalizePages = (t as nullable text) as nullable text => if t = null then null else Text.Replace(Text.Replace(NormalizeText(t), "–", "-"), "—", "-"),
-      TryNumber = (t as any) as nullable number =>
+          candidate <> null and Text.StartsWith(candidate, "10.") and Text.Contains(candidate, "/") and not Text.Contains(candidate, " ") and Text.Length(candidate) >= 5 and Text.Length(candidate) <= 300,
+      NormalizePages = (value as any) as nullable text =>
         let
-          n = try Number.From(t) otherwise try Number.FromText(Text.From(t)) otherwise null
+          normalized = NormalizeText(value),
+          replaced = if normalized = null then null else Text.Replace(Text.Replace(normalized, "–", "-"), "—", "-")
         in
-          n,
-      ListMode = (lst as list) as record =>
+          replaced,
+      TryNumber = (value as any) as nullable number =>
+        let
+          direct = try Number.From(value) otherwise null,
+          asText = if direct <> null then null else Text.Trim(ToText(value)),
+          fromText = if asText = null or asText = "" then null else try Number.FromText(asText) otherwise null,
+          result = if direct <> null then direct else fromText
+        in
+          result,
+      HasValue = (value as any) as logical =>
+        let
+          trimmed = Text.Trim(ToText(value))
+        in
+          trimmed <> "",
+      ListMode = (lst as list, optional ranker as nullable function) as record =>
         let
           nonNull = List.RemoveNulls(lst),
-          grouped = List.Transform(List.Distinct(nonNull), (v) => [value = v, count = List.Count(List.Select(nonNull, each _ = v))]),
-          sorted = List.Sort(grouped, (a, b) => Number.From(b[count]) - Number.From(a[count])),
+          distinctValues = List.Distinct(nonNull),
+          counts = List.Transform(distinctValues, (v) => [value = v, count = List.Count(List.Select(nonNull, each _ = v))]),
+          decorated =
+            if ranker = null then
+              counts
+            else
+              List.Transform(counts, (r) => Record.AddField(r, "rank", ranker(r[value]))),
+          sorted =
+            if ranker = null then
+              List.Sort(decorated, (a, b) => Number.From(b[count]) - Number.From(a[count]))
+            else
+              List.Sort(
+                decorated,
+                (a, b) =>
+                  let
+                    countDiff = Number.From(b[count]) - Number.From(a[count]),
+                    rankA = if Record.HasFields(a, "rank") then Number.From(a[rank]) else 0,
+                    rankB = if Record.HasFields(b, "rank") then Number.From(b[rank]) else 0
+                  in
+                    if countDiff <> 0 then countDiff else rankA - rankB
+              ),
           top = if List.Count(sorted) = 0 then [value = null, count = 0] else sorted{0}
         in
           top,
-      InvalidDOI = (pm as nullable text, chembl as nullable text, scholar as nullable text, crossref as nullable text, openalex as nullable text) as record =>
+      CheckDoi = (pm as nullable text, chembl as nullable text, scholar as nullable text, crossref as nullable text, openalex as nullable text) as record =>
         let
-          pm_raw = pm,
-          ch_raw = chembl,
-          sc_raw = scholar,
-          cr_raw = crossref,
-          oa_raw = openalex,
-          pm_clean = CleanDOI(pm_raw),
-          ch_clean = CleanDOI(ch_raw),
-          sc_clean = CleanDOI(sc_raw),
-          cr_clean = CleanDOI(cr_raw),
-          oa_clean = CleanDOI(oa_raw),
-          pm_valid = IsLikelyDOI(pm_clean),
-          ch_valid = IsLikelyDOI(ch_clean),
-          sc_valid = IsLikelyDOI(sc_clean),
-          cr_valid = IsLikelyDOI(cr_clean),
-          oa_valid = IsLikelyDOI(oa_clean),
-          peers_clean = List.RemoveNulls({ch_clean, sc_clean, cr_clean, oa_clean}),
-          peers_valid = List.RemoveNulls(
+          // ===== DOI source priority =====
+          // 0 = PubMed, 1 = CrossRef, 2 = OpenAlex, 3 = ChEMBL, 4 = Scholar
+          sourcePriority = {
+            [key = "pm", name = "PubMed", priority = 0],
+            [key = "crossref", name = "crossref", priority = 1],
+            [key = "openalex", name = "OpenAlex", priority = 2],
+            [key = "chembl", name = "ChEMBL", priority = 3],
+            [key = "scholar", name = "scholar", priority = 4]
+          },
+          fallbackPriority = List.Max(List.Transform(sourcePriority, each Number.From(_[priority]))) + 1,
+          rawMap = [pm = pm, chembl = chembl, scholar = scholar, crossref = crossref, openalex = openalex],
+          sources =
             List.Transform(
-              {
-                [v = ch_clean, ok = ch_valid],
-                [v = sc_clean, ok = sc_valid],
-                [v = cr_clean, ok = cr_valid],
-                [v = oa_clean, ok = oa_valid]
-              },
-              each if _[ok] and _[v] <> null then _[v] else null
-            )
-          ),
-          peers_valid_distinct = List.Distinct(peers_valid),
-          same_count = if pm_clean = null then 0 else List.Count(List.Select(peers_clean, each _ = pm_clean)),
-          modeRec = ListMode(peers_valid),
-          consensus_doi = modeRec[value],
-          consensus_support = modeRec[count],
-          selected_doi = if pm_valid then pm_clean else if consensus_doi <> null then consensus_doi else if List.Count(peers_valid_distinct) > 0 then peers_valid_distinct{0} else null,
-          selected_source =
-            if selected_doi = null then
-              null
-            else if selected_doi = pm_clean then
-              "PubMed"
-            else if selected_doi = ch_clean then
-              "ChEMBL"
-            else if selected_doi = sc_clean then
-              "scholar"
-            else if selected_doi = cr_clean then
-              "crossref"
-            else if selected_doi = oa_clean then
-              "OpenAlex"
+              sourcePriority,
+              (spec) =>
+                let
+                  rawValue = Record.Field(rawMap, spec[key]),
+                  normValue = NormalizeDoi(rawValue),
+                  isValid = IsLikelyDoi(normValue)
+                in
+                  spec & [raw = rawValue, norm = normValue, valid = isValid]
+            ),
+          sourcesByKey = Record.FromList(sources, List.Transform(sources, each _[key])),
+          pmEntry = Record.Field(sourcesByKey, "pm"),
+          validSources = List.Select(sources, each _[valid] and _[norm] <> null),
+          getPriorityForDoi = (doi as nullable text) as number =>
+            if doi = null then
+              fallbackPriority
             else
-              "unknown",
-          anyPeerValid = List.AnyTrue({ch_valid, sc_valid, cr_valid, oa_valid}),
-          invalid = (not pm_valid and anyPeerValid) or (pm_valid and same_count = 0 and List.Count(peers_clean) > 0),
+              let
+                matches = List.Transform(List.Select(validSources, each _[norm] = doi), each Number.From(_[priority]))
+              in
+                if List.Count(matches) = 0 then fallbackPriority else List.Min(matches),
+          // Consensus DOI favors the most supported value; ties break by the best source priority defined above.
+          consensusRec = ListMode(List.Transform(validSources, each _[norm]), getPriorityForDoi),
+          consensusDoi = if Record.HasFields(consensusRec, "value") then consensusRec[value] else null,
+          consensusSupport = if Record.HasFields(consensusRec, "count") then Number.From(consensusRec[count]) else 0,
+          consensusSource =
+            if consensusDoi = null then
+              null
+            else
+              let
+                supporters = List.Select(validSources, each _[norm] = consensusDoi),
+                sortedSupporters = List.Sort(supporters, (a, b) => Number.From(a[priority]) - Number.From(b[priority]))
+              in
+                if List.Count(sortedSupporters) = 0 then null else sortedSupporters{0}[name],
+          sortedValid = List.Sort(validSources, (a, b) => Number.From(a[priority]) - Number.From(b[priority])),
+          selectedCandidate =
+            if pmEntry[valid] then
+              [doi = pmEntry[norm], source = pmEntry[name]]
+            else if consensusSupport >= 2 and consensusDoi <> null then
+              [doi = consensusDoi, source = consensusSource]
+            else if List.Count(sortedValid) > 0 then
+              [doi = sortedValid{0}[norm], source = sortedValid{0}[name]]
+            else
+              [doi = null, source = null],
+          selectedDoi = selectedCandidate[doi],
+          selectedSource = selectedCandidate[source],
+          peerNormalized = List.RemoveNulls(List.Transform(List.Select(sources, each _[key] <> "pm"), each _[norm])),
+          peerSources = List.Select(validSources, each _[key] <> "pm"),
+          hasPeerSupport = List.Count(peerSources) > 0,
+          pmMatchesPeers = if pmEntry[norm] = null then false else List.AnyTrue(List.Transform(peerSources, each _[norm] = pmEntry[norm])),
+          // invalid_doi is raised when PubMed lacks a valid DOI while trusted peers provide one,
+          // or when PubMed supplies a DOI that conflicts with valid peer sources.
+          invalidDoi = (not pmEntry[valid] and hasPeerSupport) or (pmEntry[valid] and hasPeerSupport and not pmMatchesPeers),
           reason =
-            if not pm_valid and anyPeerValid then
+            if not pmEntry[valid] and hasPeerSupport then
               "pubmed_doi_missing_or_malformed"
-            else if pm_valid and same_count = 0 and List.Count(peers_clean) > 0 then
+            else if pmEntry[valid] and hasPeerSupport and not pmMatchesPeers then
               "pubmed_doi_mismatch_with_sources"
-            else if pm_valid and same_count > 0 then
+            else if pmEntry[valid] and pmMatchesPeers then
               "pubmed_doi_confirmed"
             else
-              "insufficient_data"
+              "insufficient_data",
+          sameCount =
+            if pmEntry[norm] = null then
+              0
+            else
+              List.Count(List.Select(peerNormalized, each _ = pmEntry[norm])),
+          peersValidDistinct = List.Distinct(List.Transform(peerSources, each _[norm]))
         in
           [
-            invalid_doi = invalid,
+            invalid_doi = invalidDoi,
             reason = reason,
-            same_count = same_count,
-            selected_doi = selected_doi,
-            selected_source = selected_source,
-            consensus_doi = consensus_doi,
-            consensus_support = consensus_support,
-            pm_doi_norm = pm_clean,
-            pm_valid = pm_valid,
-            chembl_doi_norm = ch_clean,
-            chembl_valid = ch_valid,
-            scholar_doi_norm = sc_clean,
-            scholar_valid = sc_valid,
-            crossref_doi_norm = cr_clean,
-            crossref_valid = cr_valid,
-            openalex_doi_norm = oa_clean,
-            openalex_valid = oa_valid,
-            pm_doi_raw = pm_raw,
-            chembl_doi_raw = ch_raw,
-            scholar_doi_raw = sc_raw,
-            crossref_doi_raw = cr_raw,
-            openalex_doi_raw = oa_raw,
-            peers_valid_distinct = peers_valid_distinct
+            same_count = sameCount,
+            selected_doi = selectedDoi,
+            selected_source = selectedSource,
+            consensus_doi = consensusDoi,
+            consensus_support = consensusSupport,
+            pm_doi_norm = pmEntry[norm],
+            pm_valid = pmEntry[valid],
+            chembl_doi_norm = Record.Field(sourcesByKey, "chembl")[norm],
+            chembl_valid = Record.Field(sourcesByKey, "chembl")[valid],
+            scholar_doi_norm = Record.Field(sourcesByKey, "scholar")[norm],
+            scholar_valid = Record.Field(sourcesByKey, "scholar")[valid],
+            crossref_doi_norm = Record.Field(sourcesByKey, "crossref")[norm],
+            crossref_valid = Record.Field(sourcesByKey, "crossref")[valid],
+            openalex_doi_norm = Record.Field(sourcesByKey, "openalex")[norm],
+            openalex_valid = Record.Field(sourcesByKey, "openalex")[valid],
+            pm_doi_raw = pmEntry[raw],
+            chembl_doi_raw = Record.Field(sourcesByKey, "chembl")[raw],
+            scholar_doi_raw = Record.Field(sourcesByKey, "scholar")[raw],
+            crossref_doi_raw = Record.Field(sourcesByKey, "crossref")[raw],
+            openalex_doi_raw = Record.Field(sourcesByKey, "openalex")[raw],
+            peers_valid_distinct = peersValidDistinct
           ],
-      TitleCheck = (pm as nullable text, chembl as nullable text, crossref as nullable text) as record =>
+      CheckTitle = (pm as nullable text, chembl as nullable text, crossref as nullable text) as record =>
         let
           pmN = NormalizeText(pm),
           chN = NormalizeText(chembl),
           crN = NormalizeText(crossref),
           same = if pmN = null then 0 else List.Count(List.Select(List.RemoveNulls({chN, crN}), each _ = pmN)),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else if crossref <> null and Text.Length(Text.Trim(crossref)) > 0 then crossref else chembl
+          pmHasValue = HasValue(pm),
+          crossrefHasValue = HasValue(crossref),
+          newValue = if pmHasValue then pm else if crossrefHasValue then crossref else chembl
         in
-          [same_count = same, new_title = newv],
-      AbstractCheck = (pm as nullable text, chembl as nullable text) as record =>
+          [same_count = same, new_title = newValue],
+      CheckAbstract = (pm as nullable text, chembl as nullable text) as record =>
         let
           pmN = NormalizeText(pm),
           chN = NormalizeText(chembl),
           same = if pmN = null then 0 else (if chN = pmN then 1 else 0),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else chembl
+          newValue = if HasValue(pm) then pm else chembl
         in
-          [same_count = same, new_abstract = newv],
-      PagesCheck = (pm as nullable text, chembl as nullable text) as record =>
+          [same_count = same, new_abstract = newValue],
+      CheckPages = (pm as nullable text, chembl as nullable text) as record =>
         let
           pmN = NormalizePages(pm),
           chN = NormalizePages(chembl),
           same = if pmN = null then 0 else (if chN = pmN then 1 else 0),
-          newv = if pm <> null and Text.Length(Text.Trim(pm)) > 0 then pm else chembl
+          newValue = if HasValue(pm) then pm else chembl
         in
-          [same_count = same, new_page = newv],
-      VolumeCheck = (pm as any, chembl as any) as record =>
+          [same_count = same, new_page = newValue],
+      CheckVolume = (pm as any, chembl as any) as record =>
         let
           pmNum = TryNumber(pm),
           chNum = TryNumber(chembl),
+          pmHas = HasValue(pm),
+          chHas = HasValue(chembl),
           same = if pmNum = null then 0 else (if chNum <> null and chNum = pmNum then 1 else 0),
-          invalid_volume =(pm <> null and pm <> "" and pmNum = null) or (chembl <> null and chembl <>"" and chNum = null) or  (pm <> null and pm <> "" and chembl <> null and chembl <>"" and pmNum<> chNum),
-          newv = if pmNum <> null then pmNum else chNum
+          invalidVolume = (pmHas and pmNum = null) or (chHas and chNum = null) or (pmHas and chHas and pmNum <> chNum),
+          newValue = if pmNum <> null then pmNum else chNum
         in
-          [same_count = same, new_volume = newv, invalid_volume = invalid_volume],
-      IssueCheck = (pm as any, chembl as any) as record =>
+          [same_count = same, new_volume = newValue, invalid_volume = invalidVolume],
+      CheckIssue = (pm as any, chembl as any) as record =>
         let
           pmNum = TryNumber(pm),
           chNum = TryNumber(chembl),
+          pmHas = HasValue(pm),
+          chHas = HasValue(chembl),
           same = if pmNum = null then 0 else (if chNum <> null and chNum = pmNum then 1 else 0),
-          invalid_issue = (pm <> null and pm <> "" and pmNum = null) or (chembl <> null and chembl <>"" and chNum = null) or  (pm <> null and pm <> "" and chembl <> null and chembl <>"" and pmNum<> chNum),
-          newv = if pmNum <> null then pmNum else chNum
+          invalidIssue = (pmHas and pmNum = null) or (chHas and chNum = null) or (pmHas and chHas and pmNum <> chNum),
+          newValue = if pmNum <> null then pmNum else chNum
         in
-          [same_count = same, new_issue = newv, invalid_issue = invalid_issue],
-      ValidateRow = (r as record) as record =>
+          [same_count = same, new_issue = newValue, invalid_issue = invalidIssue],
+      ValidateRow = (row as record) as record =>
         let
-          F = (name as text) => if Record.HasFields(r, name) then Record.Field(r, name) else null,
-          doiRes = InvalidDOI(F("PubMed.doi"), F("ChEMBL.doi"), F("scholar.doi"), F("crossref.doi"), F("OpenAlex.doi")),
-          ttlRes = TitleCheck(F("title"), F("ChEMBL.title"), F("crossref.title")),
-          absRes = AbstractCheck(F("abstract"), F("ChEMBL.abstract")),
-          pgRes = PagesCheck(F("page"), F("ChEMBL.page")),
-          volRes = VolumeCheck(F("volume"), F("ChEMBL.volume")),
-          issRes = IssueCheck(F("issue"), F("ChEMBL.issue")),
-          result = Record.Combine({[PMID = F("PMID")], doiRes, ttlRes, absRes, pgRes, volRes, issRes})
+          get = (name as text) => if Record.HasFields(row, name) then Record.Field(row, name) else null,
+          doiRes = CheckDoi(get("PubMed.doi"), get("ChEMBL.doi"), get("scholar.doi"), get("crossref.doi"), get("OpenAlex.doi")),
+          titleRes = CheckTitle(get("title"), get("ChEMBL.title"), get("crossref.title")),
+          abstractRes = CheckAbstract(get("abstract"), get("ChEMBL.abstract")),
+          pageRes = CheckPages(get("page"), get("ChEMBL.page")),
+          volumeRes = CheckVolume(get("volume"), get("ChEMBL.volume")),
+          issueRes = CheckIssue(get("issue"), get("ChEMBL.issue")),
+          result = Record.Combine({[PMID = get("PMID")], doiRes, titleRes, abstractRes, pageRes, volumeRes, issueRes})
         in
           result,
-      ValidateAll = (t as table) as table =>
+      ValidateAll = (tableToCheck as table) as table =>
         let
-          add = Table.AddColumn(t, "validation", each ValidateRow(Record.FromList(Record.ToList(_), Record.FieldNames(_)))),
-          expand = Table.ExpandRecordColumn(
-            add,
+          withValidation = Table.AddColumn(tableToCheck, "validation", each ValidateRow(Record.FromList(Record.ToList(_), Record.FieldNames(_)))),
+          expanded = Table.ExpandRecordColumn(
+            withValidation,
             "validation",
             {
               "same_count",
@@ -1029,23 +1103,32 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
               "invalid_issue",
               "PMID_for_validation"
             }
+          ),
+          typed = Table.TransformColumnTypes(
+            expanded,
+            {
+              {"new_volume", type nullable number},
+              {"new_issue", type nullable number},
+              {"invalid_volume", type logical},
+              {"invalid_issue", type logical}
+            }
           )
         in
-          expand
+          typed
     in
       [
         NormalizeText = NormalizeText,
-        CleanDOI = CleanDOI,
-        IsLikelyDOI = IsLikelyDOI,
+        NormalizeDoi = NormalizeDoi,
+        IsLikelyDoi = IsLikelyDoi,
         NormalizePages = NormalizePages,
         TryNumber = TryNumber,
         ListMode = ListMode,
-        InvalidDOI = InvalidDOI,
-        TitleCheck = TitleCheck,
-        AbstractCheck = AbstractCheck,
-        PagesCheck = PagesCheck,
-        VolumeCheck = VolumeCheck,
-        IssueCheck = IssueCheck,
+        CheckDoi = CheckDoi,
+        CheckTitle = CheckTitle,
+        CheckAbstract = CheckAbstract,
+        CheckPages = CheckPages,
+        CheckVolume = CheckVolume,
+        CheckIssue = CheckIssue,
         ValidateRow = ValidateRow,
         ValidateAll = ValidateAll
       ],
@@ -1055,7 +1138,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       let
         Source = Data[Document_out],
         Joined = document_input[_input](Source),
-        Validated = validation[ValidateAll](Joined),
+        Validated = Validation[ValidateAll](Joined),
         AddInvalid = Table.AddColumn(
           Validated,
           "invalid_record",
