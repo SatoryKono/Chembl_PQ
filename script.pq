@@ -189,7 +189,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             t1 = Table.Group(t0, {"document_chembl_id"}, {{"citations", each Table.RowCount(_), Int64.Type}})
           in
             t1,
-        ActivityRaw0 =Data[Activity_in],
+        ActivityRaw0 = Data[Activity_in],
         ActivityRaw = TransformColumnTypesSafe(
           ActivityRaw0,
           {
@@ -1051,6 +1051,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       ],
 // ===================== document_validation =====================
   data_validation_base = [
+    // ===== get_validation =====
+    // Назначение: валидация документарных записей и подготовка нормализованных атрибутов.
     get_validation = () as table =>
       let
         Source = Data[Document_out],
@@ -1123,10 +1125,16 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "openalex_doi_raw",
             "peers_valid_distinct"
           }
+        ),
+        Ordered = Table.ReorderColumns(
+          DropVerbose,
+          List.Sort(Table.ColumnNames(DropVerbose))
         )
       in
-        DropVerbose,
+        Ordered,
 
+    // ===== get_document =====
+    // Назначение: возврат очищенной таблицы документов для downstream-потребителей.
     get_document = () =>
       let
         Source = get_validation(),
@@ -1530,11 +1538,13 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         #"Added Custom3" = Table.AddColumn(#"Renamed Columns3", "is_experimental", each not [review])
       in
         #"Added Custom3",
+    // ===== get_testitem =====
+    // Назначение: объединение тестируемых сущностей с эталонным справочником и расчёт флагов качества.
     get_testitem = () =>
       let
         get_reference = () =>
           let
-            Source =Data[Testitem_in],
+            Source = Data[Testitem_in],
             #"Changed Type" = Table.TransformColumnTypes(
               Source,
               {
@@ -1564,9 +1574,15 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         #"Added to Column" = Table.TransformColumns(#"Lowercased Text1", {{"nstereo", each List.Sum({_, -1}), Int64.Type}}),
         #"Changed Type1" = Table.TransformColumnTypes(#"Added to Column", {{"nstereo", type logical}}),
         #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"nstereo", "unknown_chirality"}}),
-        #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> ""))
+        #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> "")),
+        Ordered = Table.ReorderColumns(
+          #"Added Custom",
+          List.Sort(Table.ColumnNames(#"Added Custom"))
+        )
       in
-        #"Added Custom",
+        Ordered,
+    // ===== get_assay =====
+    // Назначение: типизация и очистка витрины биологических тестов.
     get_assay = () =>
       let
         Source = Data[Assay_out],
@@ -1605,9 +1621,13 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             {"variant_sequence", type text}
           }
         ),
-        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"})
+        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"}),
+        Ordered = Table.ReorderColumns(
+          #"Removed Columns",
+          List.Sort(Table.ColumnNames(#"Removed Columns"))
+        )
       in
-        #"Removed Columns"
+        Ordered
   ],
 
   IUPHAR_int = () =>
@@ -2714,6 +2734,8 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       in
         Out
   ],
+  // ===== get_target =====
+  // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
   get_target = () =>
     let
       main1 = target[main](Data[Target_out]),
@@ -2721,16 +2743,31 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       #"Merged Queries1" = Table.NestedJoin(#"Removed Columns", {"target_chembl_id"}, target[organism](Data[Target_out]), {"target_chembl_id"}, "NewColumn.1"),
       aa = Table.ExpandTableColumn(#"Merged Queries1", "NewColumn.1", {"taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"}, {"1.taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"}),
       #"2Merged Queries1" = Table.NestedJoin(aa, {"target_chembl_id"}, target[IUPHAR](), {"target_chembl_id"}, "NewColumn.1"),
-      #"Expanded NewColumn.1" = Table.ExpandTableColumn(#"2Merged Queries1", "NewColumn.1", {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"}, {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"})
+      #"Expanded NewColumn.1" = Table.ExpandTableColumn(#"2Merged Queries1", "NewColumn.1", {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"}, {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"}),
+      Ordered = Table.ReorderColumns(
+        #"Expanded NewColumn.1",
+        List.Sort(Table.ColumnNames(#"Expanded NewColumn.1"))
+      )
     in
-      #"Expanded NewColumn.1",
-  data_validation = Record.AddField(data_validation_base, "get_target", get_target)
+      Ordered,
+  data_validation = Record.AddField(data_validation_base, "get_target", get_target),
+  // ===== Exports =====
+  // Назначение: единая точка доступа к публичным функциям модуля.
+  Exports =
+    [
+      get_validation = data_validation[get_validation],
+      get_document = data_validation[get_document],
+      get_testitem = data_validation[get_testitem],
+      get_assay = data_validation[get_assay],
+      get_target = data_validation[get_target]
+    ]
 in
   [
-    _document = data_validation[get_document],
-    _testitem = data_validation[get_testitem],
-    _assay = data_validation[get_assay],
-    _target = data_validation[get_target],
-_validation=  data_validation[get_validation],
+    Exports = Exports,
+    _document = Exports[get_document],
+    _testitem = Exports[get_testitem],
+    _assay = Exports[get_assay],
+    _target = Exports[get_target],
+    _validation = Exports[get_validation],
     ParamsSummary = ParamsSummary
   ]
