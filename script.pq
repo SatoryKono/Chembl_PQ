@@ -1,91 +1,149 @@
+// ===== Changelog =====
+// 2024-06-09: Centralized configuration via Parameters record and aligned loaders with named encodings/delimiters.
+
 let
-  BasePath = "E:\github\ChEMBL_dataAcquisition\",    // пример: "E:\github\ChEMBL_dataAcquisition\"
-  SourceKind = "File",  // "File" | "SharePoint" | "Http"
-  SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
-  Paths = [
-    document_csv           = "data\input\full\document2.csv",
-    activity_csv           = "data\input\full\activity2.csv",
-    testitem_csv           = "data\input\full\testitem.csv",
-    citation_fraction_csv  = "dictionary\_curation\citation_fraction.csv",
+  // ===== Parameters =====
+  // Paths: relative file locations. Encodings: named code pages. Delimiters: reusable separators. PathEncodingKeys: map path keys to encoding keys. Defaults: fallback keys for loaders. Tables: logical dataset handles for inputs/outputs.
+  Parameters = [
+    BasePath = "E:\github\ChEMBL_dataAcquisition\",    // пример: "E:\github\ChEMBL_dataAcquisition\"
+    SourceKind = "File",  // "File" | "SharePoint" | "Http"
+    SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
+    Defaults = [
+      EncodingKey = "Utf8",
+      DelimiterKey = "Csv"
+    ],
+    Paths = [
+      document_csv           = "data\input\full\document2.csv",
+      activity_csv           = "data\input\full\activity2.csv",
+      testitem_csv           = "data\input\full\testitem.csv",
+      citation_fraction_csv  = "dictionary\_curation\citation_fraction.csv",
 
-    document_csv_out       = "data\output\document\output.document_20250921.csv",
-    testitem_csv_out       = "data\output\testitem\output.testitem_all.csv",
-    assay_csv_out          = "data\output\assay\output.assay.csv",
-    target_csv_out         = "data\output\targets\output.target.csv"
+      document_csv_out       = "data\output\document\output.document_20250921.csv",
+      testitem_csv_out       = "data\output\testitem\output.testitem_all.csv",
+      assay_csv_out          = "data\output\assay\output.assay.csv",
+      target_csv_out         = "data\output\targets\output.target.csv"
+    ],
+    Encodings = [
+      Utf8 = 65001,
+      Latin1 = 1252
+    ],
+    Delimiters = [
+      Csv = ","
+    ],
+    PathEncodingKeys = [
+      document_csv = "Utf8",
+      activity_csv = "Utf8",
+      testitem_csv = "Utf8",
+      citation_fraction_csv = "Latin1",
 
+      document_csv_out = "Latin1",
+      testitem_csv_out = "Latin1",
+      assay_csv_out = "Latin1",
+      target_csv_out = "Latin1"
+    ],
+    Tables = [
+      DocumentIn = "Document_in",
+      ActivityIn = "Activity_in",
+      TestitemIn = "Testitem_in",
+      DocumentOut = "Document_out",
+      TestitemOut = "Testitem_out",
+      AssayOut = "Assay_out",
+      TargetOut = "Target_out"
+    ]
   ],
-Data=[
-Document_in=LoadCsv(Paths[document_csv], Encodings[Utf8]),
-Activity_in=LoadCsv(Paths[activity_csv], Encodings[Utf8]),
-Testitem_in =LoadCsv(Paths[testitem_csv], Encodings[Utf8]),
 
-
-Target_out= LoadCsv(Paths[target_csv_out], Encodings[Latin1]),
-Document_out=LoadCsv(Paths[document_csv_out], Encodings[Latin1]),
-Assay_out=LoadCsv(Paths[assay_csv_out], Encodings[Latin1]),
-Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
-],
-  Encodings = [
-    Utf8   = 65001,
-    Latin1 = 1252
-  ],
-  Delimiters = [
-    Csv = ","
-  ],
-  PathEncodingKeys = [
-    document_csv = "Utf8",
-    activity_csv = "Utf8",
-    testitem_csv = "Utf8",
-    citation_fraction_csv = "Latin1",
-
-    document_csv_out       = "Latin1",
-    testitem_csv_out      = "Latin1",     
-    assay_csv_out = "Latin1",
-    target_csv_out = "Latin1"
-  ],
-// ===== IO Helpers =====
-  BuildAbsolutePath = (pathRel as text) as text => BasePath & pathRel,
-  CheckPathExists = (pathRel as text) as logical =>
+  // ===== Providers =====
+  BuildAbsolutePath = (pathRel as text) as text => Parameters[BasePath] & pathRel,
+  GetSourceContent = (absPath as text) as binary =>
     let
-      absPath = BuildAbsolutePath(pathRel),
-      exists =
-        if SourceKind = "File" then
-          let probe = try File.Contents(absPath) otherwise null in probe <> null
-        else true
-    in
-      exists,
-  LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
-    let
-      absPath = BuildAbsolutePath(pathRel),
-      effectiveEncoding = if encoding <> null then encoding else Encodings[Utf8],
+      sourceKind = Parameters[SourceKind],
       content =
-        if SourceKind = "File" then
+        if sourceKind = "File" then
           File.Contents(absPath)
-        else if SourceKind = "Http" then
+        else if sourceKind = "Http" then
           Web.Contents(absPath)
-        else if SourceKind = "SharePoint" then
+        else if sourceKind = "SharePoint" then
           let
-            _site = SharePointSiteUrl,
+            _site = Parameters[SharePointSiteUrl],
             _todo = SharePoint.Contents(_site) // TODO: навигация к файлу и выбор нужного элемента
           in
             error "TODO: реализовать загрузку файла через SharePoint.Contents"
         else
-          error "Unknown SourceKind",
-      csv = Csv.Document(content, [Delimiter = Delimiters[Csv], Encoding = effectiveEncoding]),
+          error "Unknown SourceKind"
+    in
+      content,
+  CheckPathExists = (pathRel as text) as logical =>
+    let
+      absPath = BuildAbsolutePath(pathRel),
+      sourceKind = Parameters[SourceKind],
+      exists =
+        if sourceKind = "File" then
+          let
+            probe = try File.Contents(absPath) otherwise null
+          in
+            probe <> null
+        else
+          true
+    in
+      exists,
+
+  // ===== Loaders =====
+  ResolveEncoding = (pathKey as text) as number =>
+    let
+      defaultEncodingKey = Parameters[Defaults][EncodingKey],
+      encodingKey = Record.FieldOrDefault(Parameters[PathEncodingKeys], pathKey, defaultEncodingKey),
+      encodingValue =
+        Record.FieldOrDefault(
+          Parameters[Encodings],
+          encodingKey,
+          Record.Field(Parameters[Encodings], defaultEncodingKey)
+        )
+    in
+      encodingValue,
+  GetDelimiter = () as text =>
+    let
+      delimiterKey = Parameters[Defaults][DelimiterKey]
+    in
+      Record.Field(Parameters[Delimiters], delimiterKey),
+  LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
+    let
+      absPath = BuildAbsolutePath(pathRel),
+      defaultEncoding = Record.Field(Parameters[Encodings], Parameters[Defaults][EncodingKey]),
+      effectiveEncoding = if encoding <> null then encoding else defaultEncoding,
+      content = GetSourceContent(absPath),
+      csv = Csv.Document(content, [Delimiter = GetDelimiter(), Encoding = effectiveEncoding]),
       tbl = Table.PromoteHeaders(csv)
     in
       tbl,
+  LoadCsvByKey = (pathKey as text) as table =>
+    let
+      relPath = Record.Field(Parameters[Paths], pathKey),
+      encoding = ResolveEncoding(pathKey)
+    in
+      LoadCsv(relPath, encoding),
+  Data = [
+    Document_in = LoadCsvByKey("document_csv"),
+    Activity_in = LoadCsvByKey("activity_csv"),
+    Testitem_in = LoadCsvByKey("testitem_csv"),
+
+    Target_out = LoadCsvByKey("target_csv_out"),
+    Document_out = LoadCsvByKey("document_csv_out"),
+    Assay_out = LoadCsvByKey("assay_csv_out"),
+    Testitem_out = LoadCsvByKey("testitem_csv_out")
+  ],
   ParamsSummary =
     let
-      pathKeys = Record.FieldNames(Paths),
-      rows = List.Transform(pathKeys, (k) =>
-        let
-          rel = Record.Field(Paths, k),
-          encKey = if Record.HasFields(PathEncodingKeys, k) then Record.Field(PathEncodingKeys, k) else null,
-          encValue = if encKey <> null and Record.HasFields(Encodings, encKey) then Record.Field(Encodings, encKey) else null,
-          available = CheckPathExists(rel)
-        in
-          [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
+      pathKeys = Record.FieldNames(Parameters[Paths]),
+      rows = List.Transform(
+        pathKeys,
+        (k as text) =>
+          let
+            rel = Record.Field(Parameters[Paths], k),
+            encKey = Record.FieldOrDefault(Parameters[PathEncodingKeys], k, null),
+            encValue = if encKey <> null then Record.FieldOrDefault(Parameters[Encodings], encKey, null) else null,
+            available = CheckPathExists(rel)
+          in
+            [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
       ),
       header = {"path_key", "relative_path", "encoding_key", "encoding_value", "available"},
       summary = #table(header, List.Transform(rows, each {_[path_key], _[relative_path], _[encoding_key], _[encoding_value], _[available]}))
@@ -134,7 +192,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       let
         getReferenceThresholds = () as table =>
           let
-            t0 = LoadCsv(Paths[citation_fraction_csv], Encodings[Latin1]),
+            t0 = LoadCsvByKey("citation_fraction_csv"),
             t1 = Table.TransformColumnTypes(
               t0,
               {
