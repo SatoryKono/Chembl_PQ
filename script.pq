@@ -1,5 +1,5 @@
 // ===== Changelog =====
-// 2024-06-09: Centralized configuration via Parameters record and aligned loaders with named encodings/delimiters.
+
 
 let
   // ===== Parameters =====
@@ -185,11 +185,114 @@ let
           Table.AddColumn(tbl, columnName, each defaultValue)
     in
       result,
+  SelectColumnsSafe = (tbl as table, columns as list) as table =>
+    Table.SelectColumns(tbl, columns, MissingField.Ignore),
+  FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
+    let
+      typePairs = List.Transform(aggColumns, each {_, Int64.Type}),
+      typed = TransformColumnTypesSafe(tbl, typePairs),
+      filled = Table.ReplaceValue(typed, null, 0, Replacer.ReplaceValue, aggColumns)
+    in
+      filled,
+  BuildActivityAgg = (src as table) as table =>
+    let
+      prepared = EnsureColumn(src, "document_chembl_id", null, type text),
+      selected = SelectColumnsSafe(prepared, {"document_chembl_id"}),
+      grouped = Table.Group(selected, {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}}),
+      typed = TransformColumnTypesSafe(grouped, {{"document_chembl_id", type text}}),
+      final = FinalizeAggColumns(typed, {"n_activity"})
+    in
+      final,
+  BuildAssayAgg = (src as table) as table =>
+    let
+      colNames = Table.ColumnNames(src),
+      hasDoc = List.Contains(colNames, "document_chembl_id"),
+      hasAssay = List.Contains(colNames, "assay_chembl_id"),
+      prepared = if hasDoc then EnsureColumn(src, "document_chembl_id", null, type text) else src,
+      base =
+        if hasDoc and hasAssay then
+          let
+            normalized = EnsureColumn(prepared, "assay_chembl_id", null, type text),
+            pairs = SelectColumnsSafe(normalized, {"document_chembl_id", "assay_chembl_id"}),
+            distinctPairs = Table.Distinct(pairs),
+            grouped = Table.Group(distinctPairs, {"document_chembl_id"}, {{"n_assay", each Table.RowCount(_), Int64.Type}})
+          in
+            grouped
+        else if hasDoc then
+          let
+            docs = Table.Distinct(SelectColumnsSafe(prepared, {"document_chembl_id"})),
+            withZeros = Table.AddColumn(docs, "n_assay", each 0, Int64.Type)
+          in
+            withZeros
+        else
+          #table({"document_chembl_id", "n_assay"}, {}),
+      typed = TransformColumnTypesSafe(base, {{"document_chembl_id", type text}}),
+      final = FinalizeAggColumns(typed, {"n_assay"})
+    in
+      final,
+  BuildTestitemAgg = (src as table) as table =>
+    let
+      withDoc = EnsureColumn(src, "document_chembl_id", null, type text),
+      prepared = EnsureColumn(withDoc, "molecule_chembl_id", null, type text),
+      docMol = SelectColumnsSafe(prepared, {"document_chembl_id", "molecule_chembl_id"}),
+      distinct = Table.Distinct(docMol, {"document_chembl_id", "molecule_chembl_id"}),
+      grouped = Table.Group(distinct, {"document_chembl_id"}, {{"n_testitem", each Table.RowCount(_), Int64.Type}}),
+      typed = TransformColumnTypesSafe(grouped, {{"document_chembl_id", type text}}),
+      final = FinalizeAggColumns(typed, {"n_testitem"})
+    in
+      final,
+  BuildCitationAgg = (src as table) as table =>
+    let
+      withDoc = EnsureColumn(src, "document_chembl_id", null, type text),
+      prepared = EnsureColumn(withDoc, "is_citation", false, type logical),
+      docFlag = SelectColumnsSafe(prepared, {"document_chembl_id", "is_citation"}),
+      filtered = Table.SelectRows(docFlag, each [is_citation] = true),
+      grouped = Table.Group(filtered, {"document_chembl_id"}, {{"citations", each Table.RowCount(_), Int64.Type}}),
+      typed = TransformColumnTypesSafe(grouped, {{"document_chembl_id", type text}}),
+      final = FinalizeAggColumns(typed, {"citations"})
+    in
+      final,
 // ===================== document_input =====================
+  ReferenceThresholdsRaw = LoadCsv(Paths[citation_fraction_csv], Encodings[Latin1]),
+  ReferenceThresholdsTyped = Table.TransformColumnTypes(
+    ReferenceThresholdsRaw,
+    {
+      {"N", Int64.Type},
+      {"K_min_significant", Int64.Type},
+      {"test_used_at_threshold", type text},
+      {"p_value_at_threshold", type number}
+    }
+  ),
+  ReferenceThresholds = Table.Buffer(SelectColumnsSafe(ReferenceThresholdsTyped, {"N", "K_min_significant"})),
+  ActivityRaw0 = Data[Activity_in],
+  ActivityRaw = TransformColumnTypesSafe(
+    ActivityRaw0,
+    {
+      {"activity_chembl_id", Int64.Type},
+      {"assay_chembl_id", type text},
+      {"molecule_chembl_id", type text},
+      {"document_chembl_id", type text},
+      {"is_citation", type logical}
+    },
+    null
+  ),
+  ActivityPrepared = EnsureColumn(ActivityRaw, "document_chembl_id", null, type text),
+  ActivityBuffered = Table.Buffer(ActivityPrepared),
+  ActivityAggregates = [
+    activity = Table.Buffer(BuildActivityAgg(ActivityBuffered)),
+    assay = Table.Buffer(BuildAssayAgg(ActivityBuffered)),
+    testitem = Table.Buffer(BuildTestitemAgg(ActivityBuffered)),
+    citation = Table.Buffer(BuildCitationAgg(ActivityBuffered))
+  ],
   citations = [
     get_reference = () => Data[Document_in],
+    get_activity_agg = () => ActivityAggregates[activity],
+    get_assay_agg = () => ActivityAggregates[assay],
+    get_testitem_agg = () => ActivityAggregates[testitem],
+    get_citation_agg = () => ActivityAggregates[citation],
     get_citations_fraction = () =>
       let
+
         getReferenceThresholds = () as table =>
           let
             t0 = LoadCsvByKey("citation_fraction_csv"),
@@ -264,6 +367,7 @@ let
         AggAssay = getAssayAgg(ActivityPrepared),
         AggTest = getTestItemAgg(ActivityPrepared),
         AggCit = getCitationsAgg(ActivityPrepared),
+ 
         RA = Table.RenameColumns(AggActivity, {{"document_chembl_id", "doc_id"}}),
         J1 = Table.Join(AggCit, "document_chembl_id", RA, "doc_id", JoinKind.LeftOuter),
         J1c = Table.RemoveColumns(J1, {"doc_id"}),
@@ -272,14 +376,11 @@ let
         J2c = Table.RemoveColumns(J2, {"doc_id"}),
         RT = Table.RenameColumns(AggTest, {{"document_chembl_id", "doc_id"}}),
         J3 = Table.Join(J2c, "document_chembl_id", RT, "doc_id", JoinKind.LeftOuter),
-        J3c = Table.RemoveColumns(J3, {"doc_id"}),
-        J4 = Table.TransformColumnTypes(J3c, {{"n_activity", Int64.Type}, {"citations", Int64.Type}, {"n_assay", Int64.Type}, {"n_testitem", Int64.Type}}),
-        J5 = Table.ReplaceValue(J4, null, 0, Replacer.ReplaceValue, {"n_activity", "citations", "n_assay", "n_testitem"}),
-        Ref = getReferenceThresholds(),
-        RefR = Table.RenameColumns(Ref, {{"N", "N_key"}}),
-        J6 = Table.Join(J5, "n_activity", RefR, "N_key", JoinKind.LeftOuter),
+        Aggregated = FinalizeAggColumns(J3, {"n_activity", "citations", "n_assay", "n_testitem"}),
+        RefR = Table.RenameColumns(ReferenceThresholds, {{"N", "N_key"}}),
+        J4 = Table.Join(Aggregated, "n_activity", RefR, "N_key", JoinKind.LeftOuter),
         Result = Table.AddColumn(
-          J6,
+          J4,
           "significant_citations_fraction",
           each try [citations] > [K_min_significant] otherwise false,
           type logical
