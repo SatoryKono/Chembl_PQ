@@ -1,3 +1,5 @@
+// ===== Changelog =====
+// 2024-04-06: Refactored testitem and assay modules with shared helpers and builders.
 let
   BasePath = "E:\github\ChEMBL_dataAcquisition\",    // пример: "E:\github\ChEMBL_dataAcquisition\"
   SourceKind = "File",  // "File" | "SharePoint" | "Http"
@@ -1049,6 +1051,184 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         ValidateRow = ValidateRow,
         ValidateAll = ValidateAll
       ],
+// =====================================================
+// Modules (testitem)
+// =====================================================
+  testitem =
+    let
+      Aggregators =
+        [
+          Output = (src as table) as table =>
+            TransformColumnTypesSafe(
+              src,
+              {
+                {"molecule_chembl_id", type text},
+                {"pref_name", type text},
+                {"synonyms", type text},
+                {"molecule_type", type text},
+                {"structure_type", type text},
+                {"standard_inchi_key", type text},
+                {"is_radical", type logical}
+              }
+            ),
+          Reference = (src as table) as table =>
+            TransformColumnTypesSafe(
+              src,
+              {
+                {"molecule_chembl_id", type text},
+                {"all_names", type text},
+                {"nstereo", Int64.Type}
+              }
+            )
+        ],
+      ColumnOrder =
+        {
+          "molecule_chembl_id",
+          "pref_name",
+          "synonyms",
+          "all_names",
+          "molecule_type",
+          "structure_type",
+          "standard_inchi_key",
+          "unknown_chirality",
+          "is_radical",
+          "invalid_record"
+        },
+      ComputeUnknownChirality = (value as nullable number) as nullable logical =>
+        if value = null then null else (value - 1) <> 0,
+      Build = (testitemOut as table, testitemReference as table) as table =>
+        let
+          mainTyped = Aggregators[Output](testitemOut),
+          referenceTyped = Aggregators[Reference](testitemReference),
+          merged = JoinTables(
+            mainTyped,
+            {"molecule_chembl_id"},
+            referenceTyped,
+            {"molecule_chembl_id"},
+            "ref",
+            {"all_names", "nstereo"}
+          ),
+          lowered = LowercaseColumns(merged, {"synonyms", "all_names", "pref_name"}),
+          normalized = NormalizeListColumns(lowered, {"synonyms"}),
+          withChirality = Table.AddColumn(
+            normalized,
+            "unknown_chirality",
+            each ComputeUnknownChirality(try [nstereo] otherwise null),
+            type logical
+          ),
+          withoutStereo = RemoveIfExists(withChirality, {"nstereo"}),
+          withInvalid = Table.AddColumn(
+            withoutStereo,
+            "invalid_record",
+            each
+              not (
+                ([molecule_type] = "Small molecule") and
+                ([structure_type] = "MOL") and
+                ([is_radical] = false) and
+                (ToText([standard_inchi_key]) <> "")
+              ),
+            type logical
+          ),
+          ordered = Table.ReorderColumns(withInvalid, ColumnOrder, MissingField.Ignore)
+        in
+          ordered
+    in
+      [
+        Aggregators = Aggregators,
+        BuildTestitemTable = Build
+      ],
+// =====================================================
+// Modules (assay)
+// =====================================================
+  assay =
+    let
+      Aggregators =
+        [
+          Output = (src as table) as table =>
+            TransformColumnTypesSafe(
+              src,
+              {
+                {"assay_chembl_id", type text},
+                {"document_chembl_id", type text},
+                {"target_chembl_id", type text},
+                {"assay_category", type text},
+                {"assay_group", type text},
+                {"assay_type", type text},
+                {"assay_type_description", type text},
+                {"assay_organism", type text},
+                {"assay_test_type", type text},
+                {"assay_cell_type", type text},
+                {"assay_tissue", type text},
+                {"assay_tax_id", Int64.Type},
+                {"assay_with_same_target", Int64.Type},
+                {"confidence_score", Int64.Type},
+                {"confidence_description", type text},
+                {"relationship_type", type text},
+                {"relationship_description", type text},
+                {"bao_format", type text},
+                {"bao_label", type text},
+                {"aidx", type text},
+                {"assay_classifications", type text},
+                {"assay_parameters", type text},
+                {"assay_strain", type text},
+                {"assay_subcellular_fraction", type text},
+                {"cell_chembl_id", type text},
+                {"description", type text},
+                {"src_assay_id", type text},
+                {"src_id", Int64.Type},
+                {"tissue_chembl_id", type text},
+                {"variant_sequence", type text}
+              }
+            )
+        ],
+      ColumnsToDrop =
+        {
+          "assay_tax_id",
+          "confidence_score",
+          "confidence_description",
+          "relationship_type",
+          "relationship_description",
+          "assay_strain"
+        },
+      ColumnOrder =
+        {
+          "assay_chembl_id",
+          "document_chembl_id",
+          "target_chembl_id",
+          "assay_category",
+          "assay_group",
+          "assay_type",
+          "assay_type_description",
+          "assay_organism",
+          "assay_test_type",
+          "assay_cell_type",
+          "assay_tissue",
+          "assay_with_same_target",
+          "bao_format",
+          "bao_label",
+          "aidx",
+          "assay_classifications",
+          "assay_parameters",
+          "assay_subcellular_fraction",
+          "cell_chembl_id",
+          "description",
+          "src_assay_id",
+          "src_id",
+          "tissue_chembl_id",
+          "variant_sequence"
+        },
+      Build = (assayOut as table) as table =>
+        let
+          typed = Aggregators[Output](assayOut),
+          trimmed = RemoveIfExists(typed, ColumnsToDrop),
+          ordered = Table.ReorderColumns(trimmed, ColumnOrder, MissingField.Ignore)
+        in
+          ordered
+    in
+      [
+        Aggregators = Aggregators,
+        BuildAssayTable = Build
+      ],
 // ===================== document_validation =====================
   data_validation_base = [
     get_validation = () as table =>
@@ -1531,83 +1711,9 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       in
         #"Added Custom3",
     get_testitem = () =>
-      let
-        get_reference = () =>
-          let
-            Source =Data[Testitem_in],
-            #"Changed Type" = Table.TransformColumnTypes(
-              Source,
-              {
-                {"molecule_chembl_id", type text},
-                {"all_names", type text},
-                
-                {"nstereo", Int64.Type}
-                 
-              }
-            )
-          in
-            #"Changed Type",
-        Source = Data[Testitem_out],
-
-        #"Merged Queries" = Table.NestedJoin(Source, {"molecule_chembl_id"}, get_reference(), {"molecule_chembl_id"}, "NewColumn"),
-        #"Expanded NewColumn" = Table.ExpandTableColumn(
-          #"Merged Queries",
-          "NewColumn",
-          {"all_names", "nstereo"},
-          {"all_names", "nstereo"}
-        ),
-        #"Lowercased Text" = Table.TransformColumns(#"Expanded NewColumn", {{"synonyms", Text.Lower}, {"all_names", Text.Lower}}),
-        #"Replaced Value" = Table.ReplaceValue(#"Lowercased Text", """]", "", Replacer.ReplaceText, {"synonyms"}),
-        #"Replaced Value1" = Table.ReplaceValue(#"Replaced Value", "[""", "", Replacer.ReplaceText, {"synonyms"}),
-        #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1", """", "|", Replacer.ReplaceText, {"synonyms"}),
-        #"Lowercased Text1" = Table.TransformColumns(#"Replaced Value2", {{"pref_name", Text.Lower}}),
-        #"Added to Column" = Table.TransformColumns(#"Lowercased Text1", {{"nstereo", each List.Sum({_, -1}), Int64.Type}}),
-        #"Changed Type1" = Table.TransformColumnTypes(#"Added to Column", {{"nstereo", type logical}}),
-        #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"nstereo", "unknown_chirality"}}),
-        #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> ""))
-      in
-        #"Added Custom",
+      testitem[BuildTestitemTable](Data[Testitem_out], Data[Testitem_in]),
     get_assay = () =>
-      let
-        Source = Data[Assay_out],
-        #"Changed Type" = Table.TransformColumnTypes(
-          Source,
-          {
-            {"assay_chembl_id", type text},
-            {"document_chembl_id", type text},
-            {"target_chembl_id", type text},
-            {"assay_category", type text},
-            {"assay_group", type text},
-            {"assay_type", type text},
-            {"assay_type_description", type text},
-            {"assay_organism", type text},
-            {"assay_test_type", type text},
-            {"assay_cell_type", type text},
-            {"assay_tissue", type text},
-            {"assay_tax_id", Int64.Type},
-            {"assay_with_same_target", Int64.Type},
-            {"confidence_score", Int64.Type},
-            {"confidence_description", type text},
-            {"relationship_type", type text},
-            {"relationship_description", type text},
-            {"bao_format", type text},
-            {"bao_label", type text},
-            {"aidx", type text},
-            {"assay_classifications", type text},
-            {"assay_parameters", type text},
-            {"assay_strain", type text},
-            {"assay_subcellular_fraction", type text},
-            {"cell_chembl_id", type text},
-            {"description", type text},
-            {"src_assay_id", type text},
-            {"src_id", Int64.Type},
-            {"tissue_chembl_id", type text},
-            {"variant_sequence", type text}
-          }
-        ),
-        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"})
-      in
-        #"Removed Columns"
+      assay[BuildAssayTable](Data[Assay_out])
   ],
 
   IUPHAR_int = () =>
@@ -1793,6 +1899,60 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       out = List.Select(parts, each _ <> "")
     in
       out,
+  LowercaseColumns = (tbl as table, columns as list) as table =>
+    let
+      existing = List.Select(columns, each List.Contains(Table.ColumnNames(tbl), _)),
+      transforms = List.Transform(
+        existing,
+        (name) =>
+          {name, (value) => if value = null then null else Text.Lower(Text.From(value)), type text}
+      ),
+      result = if List.Count(transforms) = 0 then tbl else Table.TransformColumns(tbl, transforms)
+    in
+      result,
+  NormalizeListText = (value as any) as nullable text =>
+    let
+      sanitized = if value = null then null else Text.Trim(Text.From(value)),
+      result =
+        if sanitized = null or sanitized = "" then
+          null
+        else
+          let
+            withoutBrackets = Text.Remove(sanitized, "[]"),
+            quote = Character.FromNumber(34),
+            replaced = Text.Replace(withoutBrackets, quote, "|"),
+            tokens = Text.Split(replaced, "|"),
+            trimChars = " []" & quote & ",;",
+            cleaned = List.Transform(tokens, each Text.Trim(_, trimChars)),
+            filtered = List.Select(cleaned, each _ <> ""),
+            distinct = List.Distinct(filtered),
+            combined = Text.Combine(distinct, "|")
+          in
+            if combined = "" then null else combined
+    in
+      result,
+  NormalizeListColumns = (tbl as table, columns as list) as table =>
+    let
+      existing = List.Select(columns, each List.Contains(Table.ColumnNames(tbl), _)),
+      transforms = List.Transform(existing, each {_, NormalizeListText, type text}),
+      result = if List.Count(transforms) = 0 then tbl else Table.TransformColumns(tbl, transforms)
+    in
+      result,
+  JoinTables = (
+      left as table,
+      leftKeys as list,
+      right as table,
+      rightKeys as list,
+      joinColumn as text,
+      expandColumns as list,
+      optional expandNames as nullable list
+    ) as table =>
+    let
+      names = if expandNames <> null then expandNames else expandColumns,
+      joined = Table.NestedJoin(left, leftKeys, right, rightKeys, joinColumn, JoinKind.LeftOuter),
+      expanded = Table.ExpandTableColumn(joined, joinColumn, expandColumns, names, null, MissingField.Ignore)
+    in
+      expanded,
 // =====================================================
 // Cellularity rules (офлайн)
 // =====================================================
