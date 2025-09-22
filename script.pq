@@ -49,6 +49,20 @@ let
       TestitemOut = "Testitem_out",
       AssayOut = "Assay_out",
       TargetOut = "Target_out"
+    ],
+    TextCleanup = [
+      TrimChars = {" ", Character.FromNumber(9), Character.FromNumber(10), Character.FromNumber(13)},
+      PipeSeparator = "|",
+      Space = " "
+    ],
+    DoiNormalization = [
+      Prefixes = {"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"},
+      TrimChars = {" ", ".", ";", ",", ":", ")", "]", "}", ">", Character.FromNumber(34), "'"},
+      EncodedSeparators = {"%2f", "%2F"},
+      Separator = "/",
+      AuthorityPrefix = "10.",
+      MinLength = 5,
+      MaxLength = 300
     ]
   ],
 
@@ -150,41 +164,126 @@ let
     in
       summary,
 // ===== Helpers =====
-  ToText = (x as any) as text => if x = null then "" else Text.From(x),
-  CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
+  Helpers =
     let
-      raw = Text.Lower(Text.Trim(ToText(txt))),
-      parts0 = List.Select(List.Transform(Text.Split(raw, "|"), each Text.Trim(_)), each _ <> ""),
-      mapped = List.Transform(parts0, each if alias <> null and Record.HasFields(alias, _) then Record.Field(alias, _) else _),
-      filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
-      dedup = List.Distinct(filtered),
-      ordered = if sort = true then List.Sort(dedup) else dedup,
-      out = Text.Combine(ordered, "|")
+      textParams = Parameters[TextCleanup],
+      doiParams = Parameters[DoiNormalization],
+      toText = (value as any) as text => if value = null then "" else Text.From(value),
+      normalizeWhitespace = (value as any, optional forceLower as nullable logical) as nullable text =>
+        let
+          shouldLower = if forceLower = null then true else forceLower,
+          asText = if value = null then null else toText(value),
+          cleaned = if asText = null then null else Text.Clean(asText),
+          trimmed = if cleaned = null then null else Text.Trim(cleaned, textParams[TrimChars]),
+          normalized =
+            if trimmed = null or trimmed = "" then
+              null
+            else if shouldLower then
+              Text.Lower(trimmed)
+            else
+              trimmed
+        in
+          normalized,
+      cleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
+        let
+          normalized = normalizeWhitespace(txt),
+          parts =
+            if normalized = null then
+              {}
+            else
+              Text.Split(normalized, textParams[PipeSeparator]),
+          trimmedParts = List.Select(List.Transform(parts, each normalizeWhitespace(_, true)), each _ <> null),
+          mapped =
+            if alias <> null then
+              List.Transform(trimmedParts, each if Record.HasFields(alias, _) then Record.Field(alias, _) else _)
+            else
+              trimmedParts,
+          filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
+          dedup = List.Distinct(filtered),
+          ordered = if sort = true then List.Sort(dedup) else dedup,
+          result = Text.Combine(ordered, textParams[PipeSeparator])
+        in
+          result,
+      ensureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
+        let
+          hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
+          result =
+            if hasColumn then
+              tbl
+            else if columnType <> null then
+              Table.AddColumn(tbl, columnName, each defaultValue, columnType)
+            else
+              Table.AddColumn(tbl, columnName, each defaultValue)
+        in
+          result,
+      transformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
+        let
+          columnNames = Table.ColumnNames(tbl),
+          existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
+          transformed =
+            if culture <> null then
+              Table.TransformColumnTypes(tbl, existing, culture)
+            else
+              Table.TransformColumnTypes(tbl, existing)
+        in
+          transformed,
+      normalizePages = (value as any) as nullable text =>
+        let
+          base = normalizeWhitespace(value),
+          replaced = if base = null then null else Text.Replace(Text.Replace(base, "–", "-"), "—", "-")
+        in
+          replaced,
+      tryNumber = (value as any) as nullable number =>
+        let
+          direct = try Number.From(value) otherwise null,
+          asText = if direct <> null then null else normalizeWhitespace(value, false),
+          fromText = if asText = null then null else try Number.FromText(asText) otherwise null
+        in
+          if direct <> null then direct else fromText,
+      normalizeDoi = (value as any) as nullable text =>
+        let
+          normalized = normalizeWhitespace(value),
+          withoutPrefixes =
+            if normalized = null then
+              null
+            else
+              List.Accumulate(
+                doiParams[Prefixes],
+                normalized,
+                (state, pref) => if state <> null and Text.StartsWith(state, pref) then Text.Range(state, Text.Length(pref)) else state
+              ),
+          decoded =
+            if withoutPrefixes = null then
+              null
+            else
+              List.Accumulate(
+                doiParams[EncodedSeparators],
+                withoutPrefixes,
+                (state, code) => if state = null then null else Text.Replace(state, code, doiParams[Separator])
+              ),
+          trimmed = if decoded = null then null else Text.Trim(decoded, doiParams[TrimChars]),
+          compact = if trimmed = null then null else Text.Replace(trimmed, textParams[Space], "")
+        in
+          if compact = null or compact = "" then null else compact
     in
-      out,
-  TransformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
-    let
-      columnNames = Table.ColumnNames(tbl),
-      existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
-      transformed =
-        if culture <> null then
-          Table.TransformColumnTypes(tbl, existing, culture)
-        else
-          Table.TransformColumnTypes(tbl, existing)
-    in
-      transformed,
-  EnsureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
-    let
-      hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
-      result =
-        if hasColumn then
-          tbl
-        else if columnType <> null then
-          Table.AddColumn(tbl, columnName, each defaultValue, columnType)
-        else
-          Table.AddColumn(tbl, columnName, each defaultValue)
-    in
-      result,
+      [
+        ToText = toText,
+        NormalizeWhitespace = normalizeWhitespace,
+        CleanPipe = cleanPipe,
+        EnsureColumn = ensureColumn,
+        TransformColumnTypesSafe = transformColumnTypesSafe,
+        NormalizePages = normalizePages,
+        TryNumber = tryNumber,
+        NormalizeDoi = normalizeDoi
+      ],
+  ToText = Helpers[ToText],
+  NormalizeWhitespace = Helpers[NormalizeWhitespace],
+  CleanPipe = Helpers[CleanPipe],
+  EnsureColumn = Helpers[EnsureColumn],
+  TransformColumnTypesSafe = Helpers[TransformColumnTypesSafe],
+  NormalizePages = Helpers[NormalizePages],
+  TryNumber = Helpers[TryNumber],
+  NormalizeDoi = Helpers[NormalizeDoi],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, columns, MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
@@ -305,12 +404,12 @@ let
                 {"p_value_at_threshold", type number}
               }
             ),
-            t2 = Table.RemoveColumns(t1, List.Difference(Table.ColumnNames(t1), {"N", "K_min_significant"}))
+            t2 = Table.RemoveColumns(t1, List.Difference(Table.ColumnNames(t1), {"N", "K_min_significant"}), MissingField.Ignore)
           in
             t2,
         getActivityAgg = (src as table) as table =>
           let
-            t = Table.Group(Table.SelectColumns(src, {"document_chembl_id"}), {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}})
+            t = Table.Group(SelectColumnsSafe(src, {"document_chembl_id"}), {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}})
           in
             t,
         getAssayAgg = (src as table) as table =>
@@ -322,14 +421,14 @@ let
               if hasDoc and hasAssay then
                 let
                   t0 = Table.Distinct(
-                    Table.SelectColumns(src, {"document_chembl_id", "assay_chembl_id"}, MissingField.Ignore)
+                    SelectColumnsSafe(src, {"document_chembl_id", "assay_chembl_id"})
                   ),
                   t1 = Table.Group(t0, {"document_chembl_id"}, {{"n_assay", each Table.RowCount(_), Int64.Type}})
                 in
                   t1
               else if hasDoc then
                 let
-                  docs = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id"}), {"document_chembl_id"}),
+                  docs = Table.Distinct(SelectColumnsSafe(src, {"document_chembl_id"}), {"document_chembl_id"}),
                   withZeros = Table.AddColumn(docs, "n_assay", each 0, Int64.Type)
                 in
                   withZeros
@@ -340,13 +439,13 @@ let
             typed,
         getTestItemAgg = (src as table) as table =>
           let
-            t0 = Table.Distinct(Table.SelectColumns(src, {"document_chembl_id", "molecule_chembl_id"}), {"molecule_chembl_id"}),
+            t0 = Table.Distinct(SelectColumnsSafe(src, {"document_chembl_id", "molecule_chembl_id"}), {"molecule_chembl_id"}),
             t1 = Table.Group(t0, {"document_chembl_id"}, {{"n_testitem", each Table.RowCount(_), Int64.Type}})
           in
             t1,
         getCitationsAgg = (src as table) as table =>
           let
-            t0 = Table.SelectRows(Table.SelectColumns(src, {"document_chembl_id", "is_citation"}), each [is_citation] = true),
+            t0 = Table.SelectRows(SelectColumnsSafe(src, {"document_chembl_id", "is_citation"}), each [is_citation] = true),
             t1 = Table.Group(t0, {"document_chembl_id"}, {{"citations", each Table.RowCount(_), Int64.Type}})
           in
             t1,
@@ -370,10 +469,10 @@ let
  
         RA = Table.RenameColumns(AggActivity, {{"document_chembl_id", "doc_id"}}),
         J1 = Table.Join(AggCit, "document_chembl_id", RA, "doc_id", JoinKind.LeftOuter),
-        J1c = Table.RemoveColumns(J1, {"doc_id"}),
+        J1c = Table.RemoveColumns(J1, {"doc_id"}, MissingField.Ignore),
         RS = Table.RenameColumns(AggAssay, {{"document_chembl_id", "doc_id"}}),
         J2 = Table.Join(J1c, "document_chembl_id", RS, "doc_id", JoinKind.LeftOuter),
-        J2c = Table.RemoveColumns(J2, {"doc_id"}),
+        J2c = Table.RemoveColumns(J2, {"doc_id"}, MissingField.Ignore),
         RT = Table.RenameColumns(AggTest, {{"document_chembl_id", "doc_id"}}),
         J3 = Table.Join(J2c, "document_chembl_id", RT, "doc_id", JoinKind.LeftOuter),
         Aggregated = FinalizeAggColumns(J3, {"n_activity", "citations", "n_assay", "n_testitem"}),
@@ -441,7 +540,8 @@ let
             "ChEMBL.pubmed_id",
             "ChEMBL.authors",
             "ChEMBL.source"
-          }
+          },
+          MissingField.Ignore
         ),
         Repl0 = Table.ReplaceValue(Removed, null, 0, Replacer.ReplaceValue, {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"}),
         CastTxt = Table.TransformColumnTypes(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
@@ -609,7 +709,8 @@ let
             "ChEMBL.pubmed_id",
             "ChEMBL.authors",
             "ChEMBL.source"
-          }
+          },
+          MissingField.Ignore
         ),
         Cast = Table.TransformColumnTypes(
           Removed,
@@ -690,7 +791,8 @@ let
             "ChEMBL.pubmed_id",
             "ChEMBL.source",
             "ChEMBL.journal"
-          }
+          },
+          MissingField.Ignore
         ),
         Cast = Table.TransformColumnTypes(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
         Ren1 = Table.RenameColumns(Cast, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
@@ -724,7 +826,7 @@ let
           Combiner.CombineTextByDelimiter("-", QuoteStyle.None),
           "page"
         ),
-        Removed2 = Table.RemoveColumns(Pages, {"DOI"})
+        Removed2 = Table.RemoveColumns(Pages, {"DOI"}, MissingField.Ignore)
       in
         Removed2,
     _OpenAlex = (SourseOpenAlex as table) =>
@@ -785,7 +887,8 @@ let
             "crossref.Subtitle",
             "crossref.Subject",
             "crossref.Error"
-          }
+          },
+          MissingField.Ignore
         ),
         Ren = Table.RenameColumns(Removed, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
         Flag = Table.AddColumn(Ren, "same_doi", each [DOI] = [OpenAlex.DOI], type logical),
@@ -797,7 +900,7 @@ let
             {"OpenAlex.MeshDescriptors", "MeSH.descriptors"}
           }
         ),
-        Removed2 = Table.RemoveColumns(Ren1, {"OpenAlex.MeshQualifiers"}),
+        Removed2 = Table.RemoveColumns(Ren1, {"OpenAlex.MeshQualifiers"}, MissingField.Ignore),
         Ren2 = Table.RenameColumns(Removed2, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
         Lower = Table.TransformColumns(
           Ren2,
@@ -808,7 +911,7 @@ let
             {"DOI", Text.Lower}
           }
         ),
-        Removed3 = Table.RemoveColumns(Lower, {"DOI"}),
+        Removed3 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
         Ren3 = Table.RenameColumns(Removed3, {{"OpenAlex.DOI", "OpenAlex.doi"}})
       in
         Ren3,
@@ -883,11 +986,12 @@ let
             "OpenAlex.MeshQualifiers",
             "OpenAlex.Id",
             "OpenAlex.Error"
-          }
+          },
+          MissingField.Ignore
         ),
         Ren1 = Table.RenameColumns(Removed, {{"crossref.Type", "publication_type"}, {"crossref.Title", "title"}, {"crossref.Error", "Error"}}),
         Lower = Table.TransformColumns(Ren1, {{"title", Text.Lower}}),
-        Removed2 = Table.RemoveColumns(Lower, {"DOI"}),
+        Removed2 = Table.RemoveColumns(Lower, {"DOI"}, MissingField.Ignore),
         Ren2 = Table.RenameColumns(Removed2, {{"crossref.DOI", "crossref.doi"}})
       in
         Ren2,
@@ -947,53 +1051,20 @@ let
   Validation =
     let
       // ===== Normalization helpers =====
-      NormalizeText = (value as any) as nullable text =>
-        let
-          asText = if value = null then null else ToText(value),
-          cleaned = if asText = null then null else Text.Clean(asText),
-          trimmed = if cleaned = null then null else Text.Trim(cleaned),
-          lowered = if trimmed = null or trimmed = "" then null else Text.Lower(trimmed)
-        in
-          lowered,
-      NormalizeDoi = (value as any) as nullable text =>
-        let
-          normalized = NormalizeText(value),
-          prefixes = {"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:", "doi.org/"},
-          withoutPrefixes =
-            if normalized = null then
-              null
-            else
-              List.Accumulate(prefixes, normalized, (state, pref) => if Text.StartsWith(state, pref) then Text.Replace(state, pref, "") else state),
-          decoded = if withoutPrefixes = null then null else Text.Replace(Text.Replace(withoutPrefixes, "%2f", "/"), "%2F", "/"),
-          trimChars = {" ", ".", ";", ",", ":", ")", "]", "}", ">", Character.FromNumber(34), "'"},
-          trimmed = if decoded = null then null else Text.Trim(decoded, trimChars),
-          compact = if trimmed = null then null else Text.Replace(trimmed, " ", "")
-        in
-          if compact = null or compact = "" then null else compact,
+      textParams = Parameters[TextCleanup],
+      doiParams = Parameters[DoiNormalization],
+      NormalizeText = (value as any) as nullable text => NormalizeWhitespace(value),
       IsLikelyDoi = (value as any) as logical =>
         let
           candidate = NormalizeDoi(value)
         in
-          candidate <> null and Text.StartsWith(candidate, "10.") and Text.Contains(candidate, "/") and not Text.Contains(candidate, " ") and Text.Length(candidate) >= 5 and Text.Length(candidate) <= 300,
-      NormalizePages = (value as any) as nullable text =>
-        let
-          normalized = NormalizeText(value),
-          replaced = if normalized = null then null else Text.Replace(Text.Replace(normalized, "–", "-"), "—", "-")
-        in
-          replaced,
-      TryNumber = (value as any) as nullable number =>
-        let
-          direct = try Number.From(value) otherwise null,
-          asText = if direct <> null then null else Text.Trim(ToText(value)),
-          fromText = if asText = null or asText = "" then null else try Number.FromText(asText) otherwise null,
-          result = if direct <> null then direct else fromText
-        in
-          result,
-      HasValue = (value as any) as logical =>
-        let
-          trimmed = Text.Trim(ToText(value))
-        in
-          trimmed <> "",
+          candidate <> null
+            and Text.StartsWith(candidate, doiParams[AuthorityPrefix])
+            and Text.Contains(candidate, doiParams[Separator])
+            and not Text.Contains(candidate, textParams[Space])
+            and Text.Length(candidate) >= doiParams[MinLength]
+            and Text.Length(candidate) <= doiParams[MaxLength],
+      HasValue = (value as any) as logical => NormalizeWhitespace(value) <> null,
       ListMode = (lst as list, optional ranker as nullable function) as record =>
         let
           nonNull = List.RemoveNulls(lst),
@@ -1306,8 +1377,8 @@ let
           each ([consensus_support] <= 2) or ([invalid_issue] = true) or ([invalid_volume] = true),
           type logical
         ),
-        DropOriginals = Table.RemoveColumns(AddInvalid, {"title", "abstract", "volume", "issue", "page"}),
-        DropNoise = Table.RemoveColumns(DropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}),
+        DropOriginals = Table.RemoveColumns(AddInvalid, {"title", "abstract", "volume", "issue", "page"}, MissingField.Ignore),
+        DropNoise = Table.RemoveColumns(DropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}, MissingField.Ignore),
         RenameNew = Table.RenameColumns(
           DropNoise,
           {
@@ -1366,7 +1437,8 @@ let
             "crossref_doi_raw",
             "openalex_doi_raw",
             "peers_valid_distinct"
-          }
+          },
+          MissingField.Ignore
         ),
         Ordered = Table.ReorderColumns(
           DropVerbose,
@@ -1400,7 +1472,8 @@ let
             "invalid_volume",
             "invalid_issue",
             "PMID_for_validation"
-          }
+          },
+          MissingField.Ignore
         ),
         #"Renamed Columns" = Table.RenameColumns(#"Removed Columns", {{"abstract_", "abstract"}, {"_title", "title"}}),
         #"Reordered Columns1" = Table.ReorderColumns(
@@ -1500,7 +1573,8 @@ let
             "volume",
             "issue",
             "page"
-          }
+          },
+          MissingField.Ignore
         ),
         #"Reordered Columns2" = Table.ReorderColumns(
           #"Removed Columns2",
@@ -1531,7 +1605,7 @@ let
           },
           MissingField.Ignore
         ),
-        #"Removed Columns3" = Table.RemoveColumns(#"Reordered Columns2", {"crossref.crossref.Subtype", "crossref.crossref.Subtitle", "crossref.crossref.Subject"}),
+        #"Removed Columns3" = Table.RemoveColumns(#"Reordered Columns2", {"crossref.crossref.Subtype", "crossref.crossref.Subtitle", "crossref.crossref.Subject"}, MissingField.Ignore),
         #"Reordered Columns4" = Table.ReorderColumns(
           #"Removed Columns3",
           {
@@ -1648,7 +1722,8 @@ let
             "citations",
             "n_assay",
             "n_testitem"
-          }
+          },
+          MissingField.Ignore
         ),
         Typed = Table.TransformColumnTypes(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
         Drop_Journalish = {"journal-article", "journal article", "article", "journal"},
@@ -1775,7 +1850,7 @@ let
               Number.From([review]) * 2
             ) / [n_responces] > 0.335
         ),
-        #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1", {"review"}),
+        #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1", {"review"}, MissingField.Ignore),
         #"Renamed Columns3" = Table.RenameColumns(#"Removed Columns1", {{"updated_review", "review"}}),
         #"Added Custom3" = Table.AddColumn(#"Renamed Columns3", "is_experimental", each not [review])
       in
@@ -1863,7 +1938,7 @@ let
             {"variant_sequence", type text}
           }
         ),
-        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"}),
+        #"Removed Columns" = Table.RemoveColumns(#"Changed Type", {"assay_tax_id", "confidence_score", "confidence_description", "relationship_type", "relationship_description", "assay_strain"}, MissingField.Ignore),
         Ordered = Table.ReorderColumns(
           #"Removed Columns",
           List.Sort(Table.ColumnNames(#"Removed Columns"))
@@ -2047,7 +2122,7 @@ let
     let
       keep = List.Difference(Table.ColumnNames(tbl), cols)
     in
-      Table.SelectColumns(tbl, keep),
+      Table.SelectColumns(tbl, keep, MissingField.Ignore),
   SplitPipesToList = (x as any) as list =>
     let
       txt = ToText(x),
@@ -2206,7 +2281,7 @@ let
   target = [
     isoform = (Source as table) as table =>
       let
-        T1 = Table.SelectColumns(Source, {"isoform_synonyms", "isoform_names", "isoform_ids", "uniprot_id_primary", "target_chembl_id"}),
+        T1 = SelectColumnsSafe(Source, {"isoform_synonyms", "isoform_names", "isoform_ids", "uniprot_id_primary", "target_chembl_id"}),
         T2 = Table.TransformColumns(T1, {{"isoform_synonyms", each Text.Lower(ToText(_)), type text}, {"isoform_names", each Text.Lower(ToText(_)), type text}}),
         T3 = Table.TransformColumns(T2, {{"isoform_synonyms", each SplitPipesToList(_), type list}, {"isoform_names", each SplitPipesToList(_), type list}, {"isoform_ids", each SplitPipesToList(_), type list}}),
         MakeTriples = (names as list, ids as list, syns as list) as list =>
@@ -2237,9 +2312,9 @@ let
               variants,
           type list
         ),
-        Names = Table.SelectColumns(Expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}),
+        Names = SelectColumnsSafe(Expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}),
         NamesClean = Table.SelectRows(Table.TransformColumns(Names, {{"name", each Text.Trim(ToText(_)), type text}}), each [name] <> "" and [name] <> "n/a" and [name] <> "none"),
-        Syns = Table.SelectColumns(WithTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}),
+        Syns = SelectColumnsSafe(WithTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}),
         SynsExploded = Table.ExpandListColumn(Syns, "tokens"),
         SynsClean = Table.RenameColumns(Table.SelectRows(Table.TransformColumns(SynsExploded, {{"tokens", each Text.Trim(ToText(_)), type text}}), each [tokens] <> "" and [tokens] <> "n/a" and [tokens] <> "none"), {{"tokens", "name"}}),
         Combined = Table.Combine({NamesClean, SynsClean}),
@@ -2537,7 +2612,7 @@ let
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder}), MissingField.Ignore),
         drop2 =
           {
             "secondaryAccessions",
@@ -2575,12 +2650,12 @@ let
         Out,
     organism = (Source as table) as table =>
       let
-        base = Table.SelectColumns(Source, {"target_chembl_id", "uniprot_id_primary", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers"}),
+        base = SelectColumnsSafe(Source, {"target_chembl_id", "uniprot_id_primary", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers"}),
         lower = Table.TransformColumns(base, {{"lineage_superkingdom", Text.Lower, type text}, {"lineage_phylum", Text.Lower, type text}, {"lineage_class", Text.Lower, type text}}),
         withCell = Cellularity_[AddCellularitySmart](lower, "taxon_id", "lineage_superkingdom", "lineage_class"),
         ecMainList = Table.AddColumn(withCell, "ec_major_list", each let items = SplitPipesToList([reaction_ec_numbers]) in List.Distinct(List.Transform(items, each if Text.Contains(_, ".") then Text.Split(_, "."){0} else _)), type list),
         multifn = Table.AddColumn(ecMainList, "multifunctional_enzyme", each List.Count([ec_major_list]) > 1, type logical),
-        out = Table.RemoveColumns(multifn, {"ec_major_list"})
+        out = Table.RemoveColumns(multifn, {"ec_major_list"}, MissingField.Ignore)
       in
         out,
 
@@ -2687,7 +2762,7 @@ let
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keep})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keep}), MissingField.Ignore),
         R2 = Table.TransformColumns(R1, {{"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "")), type text}, {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "") in if s = "[]" or s = "" then null else s, type nullable text}}),
         TComp = try Table.SplitColumn(R2, "target_components", Splitter.SplitTextByEachDelimiter({"""component_description"": """}, QuoteStyle.None, false), {"tc1", "tc2"}) otherwise R2,
         TComp2 = try Table.SplitColumn(TComp, "tc2", Splitter.SplitTextByEachDelimiter({""", """}, QuoteStyle.None, false), {"tc2a", "tc2b"}) otherwise TComp,
@@ -2805,7 +2880,7 @@ let
             "iuphar_full_id_path",
             "iuphar_full_name_path"
           },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
+        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder}), MissingField.Ignore),
         R2 = RemoveIfExists(R1, {"uniprot_last_update", "uniprot_version", "pipeline_version", "timestamp_utc", "geneName", "xref_iuphar", "gtop_target_id", "GuidetoPHARMACOLOGY", "sequence_length", "features_transmembrane", "features_topology", "molecular_function", "cellular_component", "subcellular_location", "topology"}),
         Jn = Table.NestedJoin(R2, {"target_chembl_id", "uniprot_id_primary"}, name(Source), {"target_chembl_id", "uniprot_id_primary"}, "nm", JoinKind.LeftOuter),
         Ex = Table.ExpandTableColumn(Jn, "nm", {"recommended_name", "gene_name", "synonyms"}, {"recommended_name", "gene_name", "synonyms"}),
