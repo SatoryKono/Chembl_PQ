@@ -1,6 +1,7 @@
 // ===== Changelog =====
 // - Added unified provider routing for file, HTTP, and SharePoint sources.
 // - Implemented SharePoint parameter validation with friendly error messaging.
+// - Introduced loader configuration with early column selection and culture-aware typing.
 
 let
   // ===== Parameters =====
@@ -11,7 +12,8 @@ let
     SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
     Defaults = [
       EncodingKey = "Utf8",
-      DelimiterKey = "Csv"
+      DelimiterKey = "Csv",
+      Culture = "en-US"
     ],
     Paths = [
       document_csv           = "data\input\full\document2.csv",
@@ -50,6 +52,46 @@ let
       TestitemOut = "Testitem_out",
       AssayOut = "Assay_out",
       TargetOut = "Target_out"
+    ],
+    TableLoadConfigs = [
+      Document_in = [
+        PathKey = "document_csv"
+      ],
+      Activity_in = [
+        PathKey = "activity_csv",
+        SelectColumns = {
+          "activity_chembl_id",
+          "assay_chembl_id",
+          "molecule_chembl_id",
+          "document_chembl_id",
+          "is_citation"
+        }
+      ],
+      Testitem_in = [
+        PathKey = "testitem_csv"
+      ],
+      Target_out = [
+        PathKey = "target_csv_out"
+      ],
+      Document_out = [
+        PathKey = "document_csv_out"
+      ],
+      Assay_out = [
+        PathKey = "assay_csv_out"
+      ],
+      Testitem_out = [
+        PathKey = "testitem_csv_out"
+      ],
+      CitationFraction = [
+        PathKey = "citation_fraction_csv",
+        SelectColumns = {"N", "K_min_significant", "test_used_at_threshold", "p_value_at_threshold"},
+        Schema = {
+          {"N", Int64.Type},
+          {"K_min_significant", Int64.Type},
+          {"test_used_at_threshold", type text},
+          {"p_value_at_threshold", type number}
+        }
+      ]
     ],
     TextCleanup = [
       TrimChars = {" ", Character.FromNumber(9), Character.FromNumber(10), Character.FromNumber(13)},
@@ -214,48 +256,123 @@ let
       exists,
 
   // ===== Loaders =====
-  ResolveEncoding = (pathKey as text) as number =>
+  Loaders =
     let
-      defaultEncodingKey = Parameters[Defaults][EncodingKey],
-      encodingKey = Record.FieldOrDefault(Parameters[PathEncodingKeys], pathKey, defaultEncodingKey),
-      encodingValue =
-        Record.FieldOrDefault(
-          Parameters[Encodings],
-          encodingKey,
-          Record.Field(Parameters[Encodings], defaultEncodingKey)
-        )
+      defaults = Parameters[Defaults],
+      encodings = Parameters[Encodings],
+      delimiters = Parameters[Delimiters],
+      pathEncodingKeys = Parameters[PathEncodingKeys],
+      tableConfigs = Record.FieldOrDefault(Parameters, "TableLoadConfigs", []),
+      resolveEncoding = (pathKey as nullable text, options as nullable record) as number =>
+        let
+          opts = if options = null then [] else options,
+          explicitEncoding = if Record.HasFields(opts, {"Encoding"}) then Record.Field(opts, "Encoding") else null,
+          encodingKeyCandidate =
+            if explicitEncoding <> null then
+              null
+            else if Record.HasFields(opts, {"EncodingKey"}) then
+              let
+                key = Record.Field(opts, "EncodingKey")
+              in
+                if key = null then null else key
+            else if pathKey <> null then
+              Record.FieldOrDefault(pathEncodingKeys, pathKey, defaults[EncodingKey])
+            else
+              defaults[EncodingKey],
+          finalEncodingKey = if encodingKeyCandidate = null then defaults[EncodingKey] else encodingKeyCandidate,
+          resolved = if explicitEncoding <> null then explicitEncoding else Record.Field(encodings, finalEncodingKey)
+        in
+          resolved,
+      resolveDelimiter = (options as nullable record) as text =>
+        let
+          opts = if options = null then [] else options,
+          delimiterKeyCandidate =
+            if Record.HasFields(opts, {"DelimiterKey"}) then
+              let
+                key = Record.Field(opts, "DelimiterKey")
+              in
+                if key = null then null else key
+            else
+              defaults[DelimiterKey],
+          finalKey = if delimiterKeyCandidate = null then defaults[DelimiterKey] else delimiterKeyCandidate
+        in
+          Record.Field(delimiters, finalKey),
+      applySelectColumns = (tbl as table, options as nullable record) as table =>
+        let
+          opts = if options = null then [] else options,
+          columns = if Record.HasFields(opts, {"SelectColumns"}) then Record.Field(opts, "SelectColumns") else null
+        in
+          if columns = null then tbl else Table.SelectColumns(tbl, columns, MissingField.Ignore),
+      loadCsv = (pathRel as text, optional options as nullable record) as table =>
+        let
+          opts = if options = null then [] else options,
+          pathKey = if Record.HasFields(opts, {"PathKey"}) then Record.Field(opts, "PathKey") else null,
+          binary = Providers[GetBinary](Parameters[SourceKind], pathRel),
+          csv = Csv.Document(
+            binary,
+            [
+              Delimiter = resolveDelimiter(opts),
+              Encoding = resolveEncoding(pathKey, opts)
+            ]
+          ),
+          promoteHeaders = if Record.HasFields(opts, {"PromoteHeaders"}) then Record.Field(opts, "PromoteHeaders") else true,
+          withHeaders = if promoteHeaders then Table.PromoteHeaders(csv, [PromoteAllScalars = true]) else csv,
+          result = applySelectColumns(withHeaders, opts)
+        in
+          result,
+      loadCsvWithSchema = (pathRel as text, schema as list, optional options as nullable record) as table =>
+        let
+          raw = loadCsv(pathRel, options),
+          typed = TransformColumnTypesSafe(raw, schema)
+        in
+          typed,
+      loadFromTableConfig = (configKey as text) as table =>
+        let
+          config = Record.FieldOrDefault(tableConfigs, configKey, null)
+        in
+          if config = null then
+            error Error.Record(
+              "Loaders.LoadFromTableConfig",
+              "Конфигурация загрузки не найдена.",
+              [ConfigKey = configKey]
+            )
+          else
+            let
+              pathKey = Record.Field(config, "PathKey"),
+              relativePath = Record.Field(Parameters[Paths], pathKey),
+              options = [
+                PathKey = pathKey,
+                EncodingKey = Record.FieldOrDefault(config, "EncodingKey", null),
+                DelimiterKey = Record.FieldOrDefault(config, "DelimiterKey", null),
+                SelectColumns = Record.FieldOrDefault(config, "SelectColumns", null),
+                PromoteHeaders = Record.FieldOrDefault(config, "PromoteHeaders", true)
+              ],
+              schema = Record.FieldOrDefault(config, "Schema", null)
+            in
+              if schema <> null then
+                loadCsvWithSchema(relativePath, schema, options)
+              else
+                loadCsv(relativePath, options)
     in
-      encodingValue,
-  GetDelimiter = () as text =>
+      [
+        LoadCsv = loadCsv,
+        LoadCsvWithSchema = loadCsvWithSchema,
+        LoadFromTableConfig = loadFromTableConfig
+      ],
+  Data =
     let
-      delimiterKey = Parameters[Defaults][DelimiterKey]
+      load = Loaders[LoadFromTableConfig]
     in
-      Record.Field(Parameters[Delimiters], delimiterKey),
-  LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
-    let
-      defaultEncoding = Record.Field(Parameters[Encodings], Parameters[Defaults][EncodingKey]),
-      effectiveEncoding = if encoding <> null then encoding else defaultEncoding,
-      content = Providers[GetBinary](Parameters[SourceKind], pathRel),
-      csv = Csv.Document(content, [Delimiter = GetDelimiter(), Encoding = effectiveEncoding]),
-      tbl = Table.PromoteHeaders(csv)
-    in
-      tbl,
-  LoadCsvByKey = (pathKey as text) as table =>
-    let
-      relPath = Record.Field(Parameters[Paths], pathKey),
-      encoding = ResolveEncoding(pathKey)
-    in
-      LoadCsv(relPath, encoding),
-  Data = [
-    Document_in = LoadCsvByKey("document_csv"),
-    Activity_in = LoadCsvByKey("activity_csv"),
-    Testitem_in = LoadCsvByKey("testitem_csv"),
+      [
+        Document_in = load("Document_in"),
+        Activity_in = load("Activity_in"),
+        Testitem_in = load("Testitem_in"),
 
-    Target_out = LoadCsvByKey("target_csv_out"),
-    Document_out = LoadCsvByKey("document_csv_out"),
-    Assay_out = LoadCsvByKey("assay_csv_out"),
-    Testitem_out = LoadCsvByKey("testitem_csv_out")
-  ],
+        Target_out = load("Target_out"),
+        Document_out = load("Document_out"),
+        Assay_out = load("Assay_out"),
+        Testitem_out = load("Testitem_out")
+      ],
   ParamsSummary =
     let
       pathKeys = Record.FieldNames(Parameters[Paths]),
@@ -331,11 +448,13 @@ let
         let
           columnNames = Table.ColumnNames(tbl),
           existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
+          defaultCulture = Parameters[Defaults][Culture],
+          effectiveCulture = if culture <> null then culture else defaultCulture,
           transformed =
-            if culture <> null then
-              Table.TransformColumnTypes(tbl, existing, culture)
-            else
+            if effectiveCulture = null then
               Table.TransformColumnTypes(tbl, existing)
+            else
+              Table.TransformColumnTypes(tbl, existing, effectiveCulture)
         in
           transformed,
       normalizePages = (value as any) as nullable text =>
@@ -463,17 +582,8 @@ let
     in
       final,
 // ===================== document_input =====================
-  ReferenceThresholdsRaw = LoadCsv(Paths[citation_fraction_csv], Encodings[Latin1]),
-  ReferenceThresholdsTyped = Table.TransformColumnTypes(
-    ReferenceThresholdsRaw,
-    {
-      {"N", Int64.Type},
-      {"K_min_significant", Int64.Type},
-      {"test_used_at_threshold", type text},
-      {"p_value_at_threshold", type number}
-    }
-  ),
-  ReferenceThresholds = Table.Buffer(SelectColumnsSafe(ReferenceThresholdsTyped, {"N", "K_min_significant"})),
+  ReferenceThresholdsRaw = Loaders[LoadFromTableConfig]("CitationFraction"),
+  ReferenceThresholds = Table.Buffer(SelectColumnsSafe(ReferenceThresholdsRaw, {"N", "K_min_significant"})),
   ActivityRaw0 = Data[Activity_in],
   ActivityRaw = TransformColumnTypesSafe(
     ActivityRaw0,
@@ -505,19 +615,10 @@ let
 
         getReferenceThresholds = () as table =>
           let
-            t0 = LoadCsvByKey("citation_fraction_csv"),
-            t1 = Table.TransformColumnTypes(
-              t0,
-              {
-                {"N", Int64.Type},
-                {"K_min_significant", Int64.Type},
-                {"test_used_at_threshold", type text},
-                {"p_value_at_threshold", type number}
-              }
-            ),
-            t2 = Table.RemoveColumns(t1, List.Difference(Table.ColumnNames(t1), {"N", "K_min_significant"}), MissingField.Ignore)
+            t0 = Loaders[LoadFromTableConfig]("CitationFraction"),
+            t1 = SelectColumnsSafe(t0, {"N", "K_min_significant"})
           in
-            t2,
+            t1,
         getActivityAgg = (src as table) as table =>
           let
             t = Table.Group(SelectColumnsSafe(src, {"document_chembl_id"}), {"document_chembl_id"}, {{"n_activity", each Table.RowCount(_), Int64.Type}})
@@ -544,8 +645,8 @@ let
                 in
                   withZeros
               else
-                Table.TransformColumnTypes(#table({"document_chembl_id", "n_assay"}, {}), {{"n_assay", Int64.Type}}),
-            typed = Table.TransformColumnTypes(result, {{"n_assay", Int64.Type}}, "en-US")
+                TransformColumnTypesSafe(#table({"document_chembl_id", "n_assay"}, {}), {{"n_assay", Int64.Type}}),
+            typed = TransformColumnTypesSafe(result, {{"n_assay", Int64.Type}}, "en-US")
           in
             typed,
         getTestItemAgg = (src as table) as table =>
@@ -655,9 +756,9 @@ let
           MissingField.Ignore
         ),
         Repl0 = Table.ReplaceValue(Removed, null, 0, Replacer.ReplaceValue, {"PubMed.Volume", "PubMed.Issue", "PubMed.StartPage", "PubMed.EndPage"}),
-        CastTxt = Table.TransformColumnTypes(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
+        CastTxt = TransformColumnTypesSafe(Repl0, {{"PubMed.ArticleTitle", type text}, {"PubMed.Abstract", type text}}),
         LowerAux = Table.TransformColumns(
-          Table.TransformColumnTypes(
+          TransformColumnTypesSafe(
             CastTxt,
             {
               {"PubMed.YearCompleted", type text},
@@ -689,7 +790,7 @@ let
           Replacer.ReplaceValue,
           {"PubMed.YearCompleted", "PubMed.MonthCompleted", "PubMed.DayCompleted", "PubMed.YearRevised", "PubMed.MonthRevised", "PubMed.DayRevised"}
         ),
-        VolIssTxt = Table.TransformColumnTypes(
+        VolIssTxt = TransformColumnTypesSafe(
           Fill0,
           {
             {"PubMed.Volume", type text},
@@ -823,7 +924,7 @@ let
           },
           MissingField.Ignore
         ),
-        Cast = Table.TransformColumnTypes(
+        Cast = TransformColumnTypesSafe(
           Removed,
           {
             {"scholar.ExternalIds", type text},
@@ -905,7 +1006,7 @@ let
           },
           MissingField.Ignore
         ),
-        Cast = Table.TransformColumnTypes(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
+        Cast = TransformColumnTypesSafe(Removed, {{"ChEMBL.volume", type text}, {"ChEMBL.issue", type text}, {"ChEMBL.doi", type text}}),
         Ren1 = Table.RenameColumns(Cast, {{"PubMed.PMID", "PMID"}, {"PubMed.DOI", "DOI"}}),
         Ren2 = Table.RenameColumns(Ren1, {{"ChEMBL.title", "title"}, {"ChEMBL.document_chembl_id", "document_chembl_id"}, {"ChEMBL.abstract", "abstract"}}),
         Lower = Table.TransformColumns(Ren2, {{"DOI", Text.Lower}, {"ChEMBL.doi", Text.Lower}}),
@@ -932,7 +1033,7 @@ let
           }
         ),
         Pages = Table.CombineColumns(
-          Table.TransformColumnTypes(Lower2, {{"ChEMBL.first_page", type text}, {"ChEMBL.last_page", type text}}, "en-US"),
+          TransformColumnTypesSafe(Lower2, {{"ChEMBL.first_page", type text}, {"ChEMBL.last_page", type text}}, "en-US"),
           {"ChEMBL.first_page", "ChEMBL.last_page"},
           Combiner.CombineTextByDelimiter("-", QuoteStyle.None),
           "page"
@@ -942,7 +1043,7 @@ let
         Removed2,
     _OpenAlex = (SourseOpenAlex as table) =>
       let
-        Cast = Table.TransformColumnTypes(SourseOpenAlex, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
+        Cast = TransformColumnTypesSafe(SourseOpenAlex, {{"PubMed.PMID", Int64.Type}, {"PubMed.DOI", type text}, {"OpenAlex.DOI", type text}}),
         Removed = Table.RemoveColumns(
           Cast,
           {
@@ -1028,7 +1129,7 @@ let
         Ren3,
     _crossref = (Soursecrossref as table) =>
       let
-        Cast = Table.TransformColumnTypes(
+        Cast = TransformColumnTypesSafe(
           Soursecrossref,
           {
             {"PubMed.PMID", Int64.Type},
@@ -1114,7 +1215,7 @@ let
         SourceScholar = _scholar(Source1),
         SourceChEMBL = _ChEMBL(Source1),
         SourceOpenAlex = _OpenAlex(Source1),
-        SourceCrossRef =  Table.TransformColumnTypes(Table.DuplicateColumn(_crossref(Source1), "PMID", "crossref.PMID"),{{"crossref.PMID", type text}}),
+        SourceCrossRef =  TransformColumnTypesSafe(Table.DuplicateColumn(_crossref(Source1), "PMID", "crossref.PMID"),{{"crossref.PMID", type text}}),
         J1 = Table.NestedJoin(SourcePubMed, {"PMID"}, SourceChEMBL, {"PMID"}, "ChEMBL"),
         E1 = Table.ExpandTableColumn(
           J1,
@@ -1445,7 +1546,7 @@ let
               "PMID_for_validation"
             }
           ),
-          typed = Table.TransformColumnTypes(
+          typed = TransformColumnTypesSafe(
             expanded,
             {
               {"new_volume", type nullable number},
@@ -1563,7 +1664,7 @@ let
     get_document = () =>
       let
         Source = get_validation(),
-        #"Changed Type" = Table.TransformColumnTypes(Source, {{"volume", type text}, {"issue", type text}}),
+        #"Changed Type" = TransformColumnTypesSafe(Source, {{"volume", type text}, {"issue", type text}}),
         #"Removed Columns" = Table.RemoveColumns(
           #"Changed Type",
           {
@@ -1779,7 +1880,7 @@ let
             {"publication_type", "PubMed.publication_type"}
           }
         ),
-        #"1Changed Type1" = Table.TransformColumnTypes(#"Renamed Columns1", {{"PMID", type text}}),
+        #"1Changed Type1" = TransformColumnTypesSafe(#"Renamed Columns1", {{"PMID", type text}}),
         a = citations[get_reference](),
         #"1Merged Queries" = Table.NestedJoin(#"1Changed Type1", {"PMID"}, a, {"pubmed_id"}, "NewColumn"),
         #"1Expanded NewColumn" = Table.ExpandTableColumn(
@@ -1789,8 +1890,8 @@ let
           {"review", "document_contains_external_links", "is_experimental_doc"}
         ),
         #"1Replaced Value" = Table.ReplaceValue(#"1Expanded NewColumn", "", 0, Replacer.ReplaceValue, {"review"}),
-        #"1Changed Type2" = Table.TransformColumnTypes(#"1Replaced Value", {{"review", Int64.Type}}),
-        #"1Changed Type" = Table.TransformColumnTypes(#"1Changed Type2", {{"review", type logical}}),
+        #"1Changed Type2" = TransformColumnTypesSafe(#"1Replaced Value", {{"review", Int64.Type}}),
+        #"1Changed Type" = TransformColumnTypesSafe(#"1Changed Type2", {{"review", type logical}}),
         WithDocumentId =
           if List.Contains(Table.ColumnNames(#"1Changed Type"), "ChEMBL.document_chembl_id") then
             #"1Changed Type"
@@ -1836,7 +1937,7 @@ let
           },
           MissingField.Ignore
         ),
-        Typed = Table.TransformColumnTypes(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
+        Typed = TransformColumnTypesSafe(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
         Drop_Journalish = {"journal-article", "journal article", "article", "journal"},
         Drop_Supportish =
           {
@@ -1862,7 +1963,7 @@ let
         Alias_OpenAlexXrefType = [#"journal-article" = null, article = null],
         Alias_OpenAlexGenre = [article = null, #"0" = null],
         Alias_CrossrefPubType = [#"journal-article" = null, article = null],
-        ToTextAll = Table.TransformColumnTypes(
+        ToTextAll = TransformColumnTypesSafe(
           Typed,
           {
             {"PubMed.publication_type", type text},
@@ -1973,7 +2074,7 @@ let
         get_reference = () =>
           let
             Source = Data[Testitem_in],
-            #"Changed Type" = Table.TransformColumnTypes(
+            #"Changed Type" = TransformColumnTypesSafe(
               Source,
               {
                 {"molecule_chembl_id", type text},
@@ -2000,7 +2101,7 @@ let
         #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1", """", "|", Replacer.ReplaceText, {"synonyms"}),
         #"Lowercased Text1" = Table.TransformColumns(#"Replaced Value2", {{"pref_name", Text.Lower}}),
         #"Added to Column" = Table.TransformColumns(#"Lowercased Text1", {{"nstereo", each List.Sum({_, -1}), Int64.Type}}),
-        #"Changed Type1" = Table.TransformColumnTypes(#"Added to Column", {{"nstereo", type logical}}),
+        #"Changed Type1" = TransformColumnTypesSafe(#"Added to Column", {{"nstereo", type logical}}),
         #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"nstereo", "unknown_chirality"}}),
         #"Added Custom" = Table.AddColumn(#"Renamed Columns", "invalid_record", each not ([molecule_type] = "Small molecule" and [structure_type] = "MOL" and [is_radical] = false and [standard_inchi_key] <> "")),
         Ordered = Table.ReorderColumns(
@@ -2014,7 +2115,7 @@ let
     get_assay = () =>
       let
         Source = Data[Assay_out],
-        #"Changed Type" = Table.TransformColumnTypes(
+        #"Changed Type" = TransformColumnTypesSafe(
           Source,
           {
             {"assay_chembl_id", type text},
@@ -3064,7 +3165,7 @@ let
         NormalizeTable19 = () as table =>
           let
             T0 = table19(),
-            T1 = Table.TransformColumnTypes(
+            T1 = TransformColumnTypesSafe(
               T0,
               {
                 {"ec", Int64.Type},
@@ -3135,7 +3236,7 @@ let
             F0 = Table.SelectRows(M1, each ToText([iuphar_family_id]) = "N/A" and ToText([cellularity]) = "multicellular" and [ec_number] <> null),
             S2 = Table.SplitColumn(F0, "ec_number", Splitter.SplitTextByEachDelimiter({"."}, null, false), {"ec_major", "ec_minor"}),
             F1 = Table.SelectRows(S2, each [ec_major] <> "3"),
-            T = Table.TransformColumnTypes(F1, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
+            T = TransformColumnTypesSafe(F1, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
             J = Table.NestedJoin(T, {"ec_major"}, T19, {"ec"}, "T19", JoinKind.LeftOuter),
             Jnd = RemoveIfExists(J, IupharIdCols),
             E = Table.ExpandTableColumn(Jnd, "T19", IupharIdCols, IupharIdCols),
