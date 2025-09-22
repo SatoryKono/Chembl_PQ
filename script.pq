@@ -127,6 +127,12 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           Table.AddColumn(tbl, columnName, each defaultValue)
     in
       result,
+  Helpers = [
+    ToText = ToText,
+    CleanPipe = CleanPipe,
+    TransformColumnTypesSafe = TransformColumnTypesSafe,
+    EnsureColumn = EnsureColumn
+  ],
 // ===================== document_input =====================
   citations = [
     get_reference = () => Data[Document_in],
@@ -190,7 +196,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           in
             t1,
         ActivityRaw0 =Data[Activity_in],
-        ActivityRaw = TransformColumnTypesSafe(
+        ActivityRaw = Helpers[TransformColumnTypesSafe](
           ActivityRaw0,
           {
             {"activity_chembl_id", Int64.Type},
@@ -201,7 +207,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           },
           null
         ),
-        ActivityPrepared = EnsureColumn(ActivityRaw, "document_chembl_id", null, type text),
+        ActivityPrepared = Helpers[EnsureColumn](ActivityRaw, "document_chembl_id", null, type text),
         AggActivity = getActivityAgg(ActivityPrepared),
         AggAssay = getAssayAgg(ActivityPrepared),
         AggTest = getTestItemAgg(ActivityPrepared),
@@ -223,7 +229,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         Result = Table.AddColumn(
           J6,
           "significant_citations_fraction",
-          each try [citations] > [K_min_significant] otherwise false,
+          each let cit = [citations], threshold = [K_min_significant] in threshold <> null and cit <> null and cit > threshold,
           type logical
         ),
         Final = Table.ReorderColumns(
@@ -1050,486 +1056,390 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         ValidateAll = ValidateAll
       ],
 // ===================== document_validation =====================
+  ModuleDocumentInput = () as table =>
+    let
+      source = Data[Document_out],
+      enriched = document_input[_input](source)
+    in
+      enriched,
+  ModuleValidation = (documentRows as table) as table =>
+    let
+      validated = validation[ValidateAll](documentRows),
+      withInvalid = Table.AddColumn(
+        validated,
+        "invalid_record",
+        each ([consensus_support] <= 2) or ([invalid_issue] = true) or ([invalid_volume] = true),
+        type logical
+      ),
+      dropOriginals = Table.RemoveColumns(withInvalid, {"title", "abstract", "volume", "issue", "page"}, MissingField.Ignore),
+      dropNoise = Table.RemoveColumns(dropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}, MissingField.Ignore),
+      renameNew = Table.RenameColumns(
+        dropNoise,
+        {
+          {"new_title", "_title"},
+          {"new_abstract", "abstract_"},
+          {"new_volume", "volume"},
+          {"new_issue", "issue"},
+          {"new_page", "page"},
+          {"selected_doi", "doi"}
+        },
+        MissingField.Ignore
+      ),
+      pad = (value as any, length as number) as text => Text.PadStart(ToText(value), length, "0"),
+      addCompleted = Table.AddColumn(
+        renameNew,
+        "completed",
+        each
+          let
+            cy = pad([completed.year], 4),
+            cm = pad([completed.month], 2),
+            cd = pad([completed.day], 2),
+            ry = pad([revised.year], 4),
+            rm = pad([revised.month], 2),
+            rd = pad([revised.day], 2),
+            hasCompleted = (cy <> "0000") and (cm <> "00") and (cd <> "00")
+          in
+            if hasCompleted then cy & "-" & cm & "-" & cd else ry & "-" & rm & "-" & rd,
+        type text
+      ),
+      addSort = Table.AddColumn(
+        addCompleted,
+        "sort_order",
+        each Text.Trim(ToText([ISSN])) & ":" & Text.Trim(ToText([completed])) & ":" & pad([PMID], 8),
+        type text
+      ),
+      dropVerbose = Table.RemoveColumns(
+        addSort,
+        {
+          "doi_same_count",
+          "invalid_doi",
+          "reason",
+          "consensus_doi",
+          "consensus_support",
+          "pm_doi_norm",
+          "pm_valid",
+          "chembl_doi_norm",
+          "chembl_valid",
+          "scholar_doi_norm",
+          "scholar_valid",
+          "crossref_doi_norm",
+          "crossref_valid",
+          "openalex_doi_norm",
+          "openalex_valid",
+          "pm_doi_raw",
+          "chembl_doi_raw",
+          "scholar_doi_raw",
+          "crossref_doi_raw",
+          "openalex_doi_raw",
+          "peers_valid_distinct"
+        },
+        MissingField.Ignore
+      )
+    in
+      dropVerbose,
+  ModuleBuildDocumentTable = () as table =>
+    let
+      // ===== BuildDocumentTable =====
+      // Input: validated document rows enriched with provider metadata and activity aggregates.
+      // Output: curated document table with stable schema for downstream exports.
+      source = ModuleDocumentInput(),
+      validated = ModuleValidation(source),
+      trimmed = Table.RemoveColumns(
+        validated,
+        {
+          "PubMed.doi",
+          "error",
+          "ChEMBL.title",
+          "ChEMBL.abstract",
+          "ChEMBL.volume",
+          "ChEMBL.issue",
+          "ChEMBL.page",
+          "scholar.Venue",
+          "scholar.Error",
+          "OpenAlex.Error",
+          "crossref.title",
+          "crossref.Error",
+          "selected_source",
+          "invalid_volume",
+          "invalid_issue",
+          "PMID_for_validation",
+          "ISSN",
+          ".journal",
+          "completed.year",
+          "completed.month",
+          "completed.day",
+          "revised.year",
+          "revised.month",
+          "revised.day",
+          "volume",
+          "issue",
+          "page"
+        },
+        MissingField.Ignore
+      ),
+      withJoinKey = Table.AddColumn(trimmed, "pmid_key", each Text.Trim(ToText([PMID])), type text),
+      referenceRaw = citations[get_reference](),
+      referencePrepared = Table.TransformColumns(referenceRaw, {{"pubmed_id", each Text.Trim(ToText(_)), type text}}),
+      joinedReference = Table.NestedJoin(withJoinKey, {"pmid_key"}, referencePrepared, {"pubmed_id"}, "reference_meta", JoinKind.LeftOuter),
+      expandedReference = Table.ExpandTableColumn(
+        joinedReference,
+        "reference_meta",
+        {"classification", "document_contains_external_links", "is_experimental_doc"},
+        {"review_raw", "document_contains_external_links", "is_experimental_doc"}
+      ),
+      withoutJoinKey = Table.RemoveColumns(expandedReference, {"pmid_key"}),
+      withDocumentId =
+        if List.Contains(Table.ColumnNames(withoutJoinKey), "ChEMBL.document_chembl_id") then
+          withoutJoinKey
+        else
+          Table.AddColumn(withoutJoinKey, "ChEMBL.document_chembl_id", each null, type text),
+      citationsAgg = citations[get_citations_fraction](),
+      joinedCitations = Table.NestedJoin(
+        withDocumentId,
+        {"ChEMBL.document_chembl_id"},
+        citationsAgg,
+        {"document_chembl_id"},
+        "document_stats",
+        JoinKind.LeftOuter
+      ),
+      expandedCitations = Table.ExpandTableColumn(
+        joinedCitations,
+        "document_stats",
+        {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"},
+        {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
+      ),
+      withReview = Table.AddColumn(
+        expandedCitations,
+        "review",
+        each
+          let
+            rawText = Text.Trim(ToText([review_raw]))
+          in
+            rawText <> "" and rawText <> "0",
+        type logical
+      ),
+      cleanedReview = Table.RemoveColumns(withReview, {"review_raw"}),
+      dropJournalish = {"journal-article", "journal article", "article", "journal"},
+      dropSupportish =
+        {
+          "research support, u.s. gov't, p.h.s.",
+          "research support, non-u.s. gov't",
+          "research support, u.s. gov't, non-p.h.s.",
+          "research support, n.i.h., extramural",
+          "research support, n.i.h., intramural",
+          "research support, american recovery and reinvestment act"
+        },
+      aliasPublicationType =
+        [
+          #"clinical trial, phase i" = "clinical trial",
+          #"clinical trial, phase ii" = "clinical trial",
+          #"historical article" = "review",
+          #"validation study" = "validation study",
+          lecture = "review",
+          address = "review",
+          #"comparative study" = "comparative study"
+        ],
+      aliasScholar = [study = null, clinicaltrial = "clinicaltrial", review = "review", lettersandcomments = "lettersandcomments"],
+      aliasOpenAlexPubType = [paratext = "paratext", component = "paratext", article = null, journal = null, #"journal-article" = null, #"journal article" = null],
+      aliasOpenAlexXrefType = [#"journal-article" = null, article = null],
+      aliasOpenAlexGenre = [article = null, #"0" = null],
+      aliasCrossrefPubType = [#"journal-article" = null, article = null],
+      typedForCleaning = Helpers[TransformColumnTypesSafe](
+        cleanedReview,
+        {
+          {"_title", type text},
+          {"abstract_", type text},
+          {"publication_type", type text},
+          {"ChEMBL.document_chembl_id", type text},
+          {"scholar.PublicationTypes", type text},
+          {"OpenAlex.publication_type", type text},
+          {"OpenAlex.crossref_type", type text},
+          {"OpenAlex.Genre", type text},
+          {"crossref.publication_type", type text},
+          {"PubMed.MeSH_Qualifiers", type text},
+          {"MeSH.descriptors", type text},
+          {"OpenAlex.MeSH.descriptors", type text},
+          {"PubMed.ChemicalList", type text}
+        },
+        "en-US"
+      ),
+      cleanedScholar = Table.TransformColumns(
+        typedForCleaning,
+        {
+          {"scholar.PublicationTypes", each CleanPipe(_, aliasScholar, {"journalarticle", "study", ""}, false), type text}
+        }
+      ),
+      cleanedOpenAlexPub = Table.TransformColumns(
+        cleanedScholar,
+        {
+          {"OpenAlex.publication_type", each CleanPipe(_, aliasOpenAlexPubType, {"0", "article", "journal", "journal-article", "journal article", ""}, false), type text}
+        }
+      ),
+      cleanedCrossrefPub = Table.TransformColumns(
+        cleanedOpenAlexPub,
+        {
+          {"crossref.publication_type", each CleanPipe(_, aliasCrossrefPubType, {"journal-article", "article", ""}, false), type text}
+        }
+      ),
+      cleanedCrossrefType = Table.TransformColumns(
+        cleanedCrossrefPub,
+        {
+          {"OpenAlex.crossref_type", each CleanPipe(_, aliasOpenAlexXrefType, {"journal-article", "article", ""}, false), type text}
+        }
+      ),
+      cleanedGenre = Table.TransformColumns(
+        cleanedCrossrefType,
+        {
+          {"OpenAlex.Genre", each CleanPipe(_, aliasOpenAlexGenre, {"0", "article", ""}, false), type text}
+        }
+      ),
+      cleanedPubMed = Table.TransformColumns(
+        cleanedGenre,
+        {
+          {
+            "publication_type",
+            each
+              let
+                drop = List.Union({dropJournalish, dropSupportish, {""}})
+              in
+                CleanPipe(_, aliasPublicationType, drop, false),
+            type text
+          }
+        }
+      ),
+      CountIfHasValue = (value as any) as number => if Text.Trim(ToText(value)) = "" then 0 else 1,
+      ContainsReview = (value as any) as number => if Text.Contains(Text.Trim(ToText(value)), "review") then 1 else 0,
+      EqualsReview = (value as any) as number => if Text.Trim(ToText(value)) = "review" then 1 else 0,
+      withResponses = Table.AddColumn(
+        cleanedPubMed,
+        "n_responces",
+        each
+          CountIfHasValue([PubMed.publication_type]) +
+          CountIfHasValue([scholar.PublicationTypes]) +
+          CountIfHasValue([OpenAlex.publication_type]) +
+          CountIfHasValue([OpenAlex.crossref_type]) +
+          2,
+        Int64.Type
+      ),
+      withUpdatedReview = Table.AddColumn(
+        withResponses,
+        "updated_review",
+        each
+          let
+            baseReview = if [review] = null then false else [review],
+            votes =
+              ContainsReview([PubMed.publication_type]) +
+              EqualsReview([scholar.PublicationTypes]) +
+              EqualsReview([OpenAlex.publication_type]) +
+              EqualsReview([OpenAlex.crossref_type]) +
+              (if baseReview then 2 else 0),
+            denominator = if [n_responces] = null then 0 else [n_responces]
+          in
+            baseReview or (if denominator = 0 then false else (votes / denominator) > 0.335),
+        type logical
+      ),
+      withoutOriginalReview = Table.RemoveColumns(withUpdatedReview, {"review"}, MissingField.Ignore),
+      renamedReview = Table.RenameColumns(withoutOriginalReview, {{"updated_review", "review"}}),
+      withIsExperimental = Table.AddColumn(
+        renamedReview,
+        "is_experimental",
+        each
+          let
+            reviewFlag = if [review] = null then false else [review]
+          in
+            not reviewFlag,
+        type logical
+      ),
+      renamePairs = {
+        {"_title", "title"},
+        {"abstract_", "abstract"},
+        {"MeSH.descriptors", "PubMed.MeSH"},
+        {"OpenAlex.MeSH.descriptors", "OpenAlex.MeSH"},
+        {"PubMed.MeSH_Qualifiers", "MeSH.qualifiers"},
+        {"PubMed.ChemicalList", "chemical_list"},
+        {"publication_type", "PubMed.publication_type"}
+      },
+      columnOrder = {
+        "PMID",
+        "doi",
+        "sort_order",
+        "completed",
+        "invalid_record",
+        "title",
+        "abstract",
+        "authors",
+        "PubMed.MeSH",
+        "OpenAlex.MeSH",
+        "MeSH.qualifiers",
+        "chemical_list",
+        "PubMed.publication_type",
+        "ChEMBL.document_chembl_id",
+        "scholar.PublicationTypes",
+        "OpenAlex.publication_type",
+        "OpenAlex.crossref_type",
+        "OpenAlex.Genre",
+        "crossref.publication_type",
+        "document_contains_external_links",
+        "significant_citations_fraction",
+        "is_experimental_doc",
+        "n_activity",
+        "citations",
+        "n_assay",
+        "n_testitem",
+        "n_responces",
+        "review",
+        "is_experimental"
+      },
+      typeList = {
+        {"PMID", Int64.Type},
+        {"doi", type text},
+        {"sort_order", type text},
+        {"completed", type text},
+        {"invalid_record", type logical},
+        {"title", type text},
+        {"abstract", type text},
+        {"authors", type text},
+        {"PubMed.MeSH", type text},
+        {"OpenAlex.MeSH", type text},
+        {"MeSH.qualifiers", type text},
+        {"chemical_list", type text},
+        {"PubMed.publication_type", type text},
+        {"ChEMBL.document_chembl_id", type text},
+        {"scholar.PublicationTypes", type text},
+        {"OpenAlex.publication_type", type text},
+        {"OpenAlex.crossref_type", type text},
+        {"OpenAlex.Genre", type text},
+        {"crossref.publication_type", type text},
+        {"document_contains_external_links", type logical},
+        {"significant_citations_fraction", type logical},
+        {"is_experimental_doc", type logical},
+        {"n_activity", Int64.Type},
+        {"citations", Int64.Type},
+        {"n_assay", Int64.Type},
+        {"n_testitem", Int64.Type},
+        {"n_responces", Int64.Type},
+        {"review", type logical},
+        {"is_experimental", type logical}
+      },
+      applySchema = (tbl as table) as table =>
+        let
+          renamed = Table.RenameColumns(tbl, renamePairs, MissingField.Ignore),
+          typed = Helpers[TransformColumnTypesSafe](renamed, typeList, null),
+          selected = Table.SelectColumns(typed, columnOrder, MissingField.Ignore)
+        in
+          selected,
+      shaped = applySchema(withIsExperimental)
+    in
+      shaped,
+  Modules =
+    [
+      DocumentInput = ModuleDocumentInput,
+      Validation = ModuleValidation,
+      BuildDocumentTable = ModuleBuildDocumentTable
+    ],
   data_validation_base = [
-    get_validation = () as table =>
-      let
-        Source = Data[Document_out],
-        Joined = document_input[_input](Source),
-        Validated = validation[ValidateAll](Joined),
-        AddInvalid = Table.AddColumn(
-          Validated,
-          "invalid_record",
-          each ([consensus_support] <= 2) or ([invalid_issue] = true) or ([invalid_volume] = true),
-          type logical
-        ),
-        DropOriginals = Table.RemoveColumns(AddInvalid, {"title", "abstract", "volume", "issue", "page"}),
-        DropNoise = Table.RemoveColumns(DropOriginals, {"ChEMBL.doi", "scholar.doi", "OpenAlex.doi", "crossref.doi"}),
-        RenameNew = Table.RenameColumns(
-          DropNoise,
-          {
-            {"new_title", "_title"},
-            {"new_abstract", "abstract_"},
-            {"new_volume", "volume"},
-            {"new_issue", "issue"},
-            {"new_page", "page"},
-            {"selected_doi", "doi"}
-          },
-          MissingField.Ignore
-        ),
-        AddCompleted = Table.AddColumn(
-          RenameNew,
-          "completed",
-          each
-            let
-              cy = Text.PadStart(Text.From([completed.year]), 4, "0"),
-              cm = Text.PadStart(Text.From([completed.month]), 2, "0"),
-              cd = Text.PadStart(Text.From([completed.day]), 2, "0"),
-              ry = Text.PadStart(Text.From([revised.year]), 4, "0"),
-              rm = Text.PadStart(Text.From([revised.month]), 2, "0"),
-              rd = Text.PadStart(Text.From([revised.day]), 2, "0"),
-              hasCompleted = (cy <> "0000") and (cm <> "00") and (cd <> "00")
-            in
-              if hasCompleted then cy & "-" & cm & "-" & cd else ry & "-" & rm & "-" & rd,
-          type text
-        ),
-        AddSort = Table.AddColumn(
-          AddCompleted,
-          "sort_order",
-          each [ISSN] & ":" & [completed] & ":" & Text.PadStart(Text.From([PMID]), 8, "0"),
-          type text
-        ),
-        DropVerbose = Table.RemoveColumns(
-          AddSort,
-          {
-            "doi_same_count",
-            "invalid_doi",
-            "reason",
-            "consensus_doi",
-            "consensus_support",
-            "pm_doi_norm",
-            "pm_valid",
-            "chembl_doi_norm",
-            "chembl_valid",
-            "scholar_doi_norm",
-            "scholar_valid",
-            "crossref_doi_norm",
-            "crossref_valid",
-            "openalex_doi_norm",
-            "openalex_valid",
-            "pm_doi_raw",
-            "chembl_doi_raw",
-            "scholar_doi_raw",
-            "crossref_doi_raw",
-            "openalex_doi_raw",
-            "peers_valid_distinct"
-          }
-        )
-      in
-        DropVerbose,
-
-    get_document = () =>
-      let
-        Source = get_validation(),
-        #"Changed Type" = Table.TransformColumnTypes(Source, {{"volume", type text}, {"issue", type text}}),
-        #"Removed Columns" = Table.RemoveColumns(
-          #"Changed Type",
-          {
-            "PubMed.doi",
-            "error",
-            "ChEMBL.title",
-            "ChEMBL.abstract",
-            "ChEMBL.volume",
-            "ChEMBL.issue",
-            "ChEMBL.page",
-            "scholar.Venue",
-            "scholar.Error",
-            "OpenAlex.Error",
-            "crossref.title",
-            "crossref.Error",
-            "selected_source",
-            "invalid_volume",
-            "invalid_issue",
-            "PMID_for_validation"
-          }
-        ),
-        #"Renamed Columns" = Table.RenameColumns(#"Removed Columns", {{"abstract_", "abstract"}, {"_title", "title"}}),
-        #"Reordered Columns1" = Table.ReorderColumns(
-          #"Renamed Columns",
-          {
-            "PMID",
-            "publication_type",
-            "MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "completed.year",
-            "completed.month",
-            "completed.day",
-            "revised.year",
-            "revised.month",
-            "revised.day",
-            "authors",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "OpenAlex.Venue",
-            "OpenAlex.MeSH.descriptors",
-            "crossref.publication_type",
-            "crossref.crossref.Subtype",
-            "crossref.crossref.Subtitle",
-            "crossref.crossref.Subject",
-            "doi",
-            "title",
-            "abstract",
-            "page",
-            "volume",
-            "issue",
-            "invalid_record",
-            "completed",
-            "sort_order",
-            "ISSN",
-            ".journal"
-          },
-          MissingField.Ignore
-        ),
-        #"Reordered Columns" = Table.ReorderColumns(
-          #"Reordered Columns1",
-          {
-            "PMID",
-            "ISSN",
-            ".journal",
-            "publication_type",
-            "MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "completed.year",
-            "completed.month",
-            "completed.day",
-            "revised.year",
-            "revised.month",
-            "revised.day",
-            "authors",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "OpenAlex.Venue",
-            "OpenAlex.MeSH.descriptors",
-            "crossref.publication_type",
-            "crossref.crossref.Subtype",
-            "crossref.crossref.Subtitle",
-            "crossref.crossref.Subject",
-            "doi",
-            "title",
-            "abstract",
-            "volume",
-            "issue",
-            "page",
-            "invalid_record",
-            "completed",
-            "sort_order"
-          },
-          MissingField.Ignore
-        ),
-        #"Added Custom" = Table.AddColumn(
-          #"Reordered Columns",
-          "reference",
-          each [#".journal"] & " (ISSN=" & [ISSN] & "), " & [completed.year] & ", " & [volume] & " (" & [issue] & "), p:" & [page]
-        ),
-        #"Removed Columns2" = Table.RemoveColumns(
-          #"Added Custom",
-          {
-            "ISSN",
-            ".journal",
-            "completed.year",
-            "completed.month",
-            "completed.day",
-            "revised.year",
-            "revised.month",
-            "revised.day",
-            "volume",
-            "issue",
-            "page"
-          }
-        ),
-        #"Reordered Columns2" = Table.ReorderColumns(
-          #"Removed Columns2",
-          {
-            "invalid_record",
-            "reference",
-            "completed",
-            "sort_order",
-            "PMID",
-            "publication_type",
-            "MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "authors",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "OpenAlex.Venue",
-            "OpenAlex.MeSH.descriptors",
-            "crossref.publication_type",
-            "crossref.crossref.Subtype",
-            "crossref.crossref.Subtitle",
-            "crossref.crossref.Subject",
-            "doi",
-            "title",
-            "abstract"
-          },
-          MissingField.Ignore
-        ),
-        #"Removed Columns3" = Table.RemoveColumns(#"Reordered Columns2", {"crossref.crossref.Subtype", "crossref.crossref.Subtitle", "crossref.crossref.Subject"}),
-        #"Reordered Columns4" = Table.ReorderColumns(
-          #"Removed Columns3",
-          {
-            "doi",
-            "invalid_record",
-            "reference",
-            "completed",
-            "sort_order",
-            "PMID",
-            "publication_type",
-            "MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "authors",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "OpenAlex.Venue",
-            "OpenAlex.MeSH.descriptors",
-            "crossref.publication_type",
-            "title",
-            "abstract"
-          },
-          MissingField.Ignore
-        ),
-        #"Reordered Columns3" = Table.ReorderColumns(
-          #"Reordered Columns4",
-          {
-            "PMID",
-            "reference",
-            "doi",
-            "sort_order",
-            "completed",
-            "invalid_record",
-            "title",
-            "abstract",
-            "authors",
-            "MeSH.descriptors",
-            "OpenAlex.MeSH.descriptors",
-            "PubMed.MeSH_Qualifiers",
-            "PubMed.ChemicalList",
-            "publication_type",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "crossref.publication_type",
-            "OpenAlex.Genre",
-            "OpenAlex.Venue"
-          },
-          MissingField.Ignore
-        ),
-        #"Renamed Columns2" = Table.RenameColumns(#"Reordered Columns3", {{"PubMed.ChemicalList", "chemical_list"}}),
-        #"Renamed Columns1" = Table.RenameColumns(
-          #"Renamed Columns2",
-          {
-            {"PubMed.MeSH_Qualifiers", "MeSH.qualifiers"},
-            {"MeSH.descriptors", "PubMed.MeSH"},
-            {"OpenAlex.MeSH.descriptors", "OpenAlex.MeSH"},
-            {"publication_type", "PubMed.publication_type"}
-          }
-        ),
-        #"1Changed Type1" = Table.TransformColumnTypes(#"Renamed Columns1", {{"PMID", type text}}),
-        a = citations[get_reference](),
-        #"1Merged Queries" = Table.NestedJoin(#"1Changed Type1", {"PMID"}, a, {"pubmed_id"}, "NewColumn"),
-        #"1Expanded NewColumn" = Table.ExpandTableColumn(
-          #"1Merged Queries",
-          "NewColumn",
-          {"classification", "document_contains_external_links", "is_experimental_doc"},
-          {"review", "document_contains_external_links", "is_experimental_doc"}
-        ),
-        #"1Replaced Value" = Table.ReplaceValue(#"1Expanded NewColumn", "", 0, Replacer.ReplaceValue, {"review"}),
-        #"1Changed Type2" = Table.TransformColumnTypes(#"1Replaced Value", {{"review", Int64.Type}}),
-        #"1Changed Type" = Table.TransformColumnTypes(#"1Changed Type2", {{"review", type logical}}),
-        WithDocumentId =
-          if List.Contains(Table.ColumnNames(#"1Changed Type"), "ChEMBL.document_chembl_id") then
-            #"1Changed Type"
-          else
-            Table.AddColumn(#"1Changed Type", "ChEMBL.document_chembl_id", each null, type text),
-        #"1Merged Queries1" = Table.NestedJoin(WithDocumentId, {"ChEMBL.document_chembl_id"}, citations[get_citations_fraction](), {"document_chembl_id"}, "NewColumn"),
-        #"1Expanded NewColumn1" = Table.ExpandTableColumn(
-          #"1Merged Queries1",
-          "NewColumn",
-          {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"},
-          {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
-        ),
-        Keep = Table.SelectColumns(
-          #"1Expanded NewColumn1",
-          {
-            "PMID",
-            "doi",
-            "sort_order",
-            "completed",
-            "invalid_record",
-            "title",
-            "abstract",
-            "authors",
-            "PubMed.MeSH",
-            "OpenAlex.MeSH",
-            "MeSH.qualifiers",
-            "chemical_list",
-            "PubMed.publication_type",
-            "ChEMBL.document_chembl_id",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "crossref.publication_type",
-            "review",
-            "document_contains_external_links",
-            "significant_citations_fraction",
-            "is_experimental_doc",
-            "n_activity",
-            "citations",
-            "n_assay",
-            "n_testitem"
-          }
-        ),
-        Typed = Table.TransformColumnTypes(Keep, {{"PMID", Int64.Type}, {"review", type logical}, {"significant_citations_fraction", type logical}}),
-        Drop_Journalish = {"journal-article", "journal article", "article", "journal"},
-        Drop_Supportish =
-          {
-            "research support, u.s. gov't, p.h.s.",
-            "research support, non-u.s. gov't",
-            "research support, u.s. gov't, non-p.h.s.",
-            "research support, n.i.h., extramural",
-            "research support, n.i.h., intramural",
-            "research support, american recovery and reinvestment act"
-          },
-        Alias_PublicationType =
-          [
-            #"clinical trial, phase i" = "clinical trial",
-            #"clinical trial, phase ii" = "clinical trial",
-            #"historical article" = "review",
-            #"validation study" = "validation study",
-            lecture = "review",
-            address = "review",
-            #"comparative study" = "comparative study"
-          ],
-        Alias_Scholar = [study = null, clinicaltrial = "clinicaltrial", review = "review", lettersandcomments = "lettersandcomments"],
-        Alias_OpenAlexPubType = [paratext = "paratext", component = "paratext", article = null, journal = null, #"journal-article" = null, #"journal article" = null],
-        Alias_OpenAlexXrefType = [#"journal-article" = null, article = null],
-        Alias_OpenAlexGenre = [article = null, #"0" = null],
-        Alias_CrossrefPubType = [#"journal-article" = null, article = null],
-        ToTextAll = Table.TransformColumnTypes(
-          Typed,
-          {
-            {"PubMed.publication_type", type text},
-            {"ChEMBL.document_chembl_id", type text},
-            {"scholar.PublicationTypes", type text},
-            {"OpenAlex.publication_type", type text},
-            {"OpenAlex.crossref_type", type text},
-            {"OpenAlex.Genre", type text},
-            {"crossref.publication_type", type text}
-          },
-          "en-US"
-        ),
-        Clean1 = Table.TransformColumns(
-          ToTextAll,
-          {
-            {"scholar.PublicationTypes", each let t = CleanPipe(_, Alias_Scholar, {"journalarticle", "study", ""}, false) in t, type text}
-          }
-        ),
-        Clean2 = Table.TransformColumns(
-          Clean1,
-          {
-            {"OpenAlex.publication_type", each CleanPipe(_, Alias_OpenAlexPubType, {"0", "article", "journal", "journal-article", "journal article", ""}, false), type text}
-          }
-        ),
-        Clean3 = Table.TransformColumns(
-          Clean2,
-          {
-            {"crossref.publication_type", each CleanPipe(_, Alias_CrossrefPubType, {"journal-article", "article", ""}, false), type text}
-          }
-        ),
-        Clean4 = Table.TransformColumns(
-          Clean3,
-          {
-            {"OpenAlex.crossref_type", each CleanPipe(_, Alias_OpenAlexXrefType, {"journal-article", "article", ""}, false), type text}
-          }
-        ),
-        Clean5 = Table.TransformColumns(
-          Clean4,
-          {
-            {"OpenAlex.Genre", each CleanPipe(_, Alias_OpenAlexGenre, {"0", "article", ""}, false), type text}
-          }
-        ),
-        Clean6 = Table.TransformColumns(
-          Clean5,
-          {
-            {"PubMed.publication_type", each let drop = List.Union({Drop_Journalish, Drop_Supportish, {""}}) in CleanPipe(_, Alias_PublicationType, drop, false), type text}
-          }
-        ),
-        Final = Table.ReorderColumns(
-          Clean6,
-          {
-            "PMID",
-            "doi",
-            "sort_order",
-            "completed",
-            "invalid_record",
-            "title",
-            "abstract",
-            "authors",
-            "PubMed.MeSH",
-            "OpenAlex.MeSH",
-            "MeSH.qualifiers",
-            "chemical_list",
-            "ChEMBL.document_chembl_id",
-            "PubMed.publication_type",
-            "scholar.PublicationTypes",
-            "OpenAlex.publication_type",
-            "OpenAlex.crossref_type",
-            "OpenAlex.Genre",
-            "crossref.publication_type",
-            "review",
-            "significant_citations_fraction"
-          },
-          MissingField.Ignore
-        ),
-        #"Added Custom2" = Table.AddColumn(
-          Final,
-          "n_responces",
-          each
-            Number.From([PubMed.publication_type] <> "") +
-            Number.From([scholar.PublicationTypes] <> "") +
-            Number.From([OpenAlex.publication_type] <> "") +
-            Number.From([OpenAlex.crossref_type] <> "") +
-            2
-        ),
-        #"Added Custom1" = Table.AddColumn(
-          #"Added Custom2",
-          "updated_review",
-          each
-            [review] or
-            (
-              Number.From(Text.Contains([PubMed.publication_type], "review")) +
-              Number.From([scholar.PublicationTypes] = "review") +
-              Number.From([OpenAlex.publication_type] = "review") +
-              Number.From([OpenAlex.crossref_type] = "review") +
-              Number.From([review]) * 2
-            ) / [n_responces] > 0.335
-        ),
-        #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1", {"review"}),
-        #"Renamed Columns3" = Table.RenameColumns(#"Removed Columns1", {{"updated_review", "review"}}),
-        #"Added Custom3" = Table.AddColumn(#"Renamed Columns3", "is_experimental", each not [review])
-      in
-        #"Added Custom3",
+    get_validation = () as table => Modules[Validation](Modules[DocumentInput]()),
+    get_document = () => Modules[BuildDocumentTable](),
     get_testitem = () =>
       let
         get_reference = () =>
