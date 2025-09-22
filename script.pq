@@ -1,132 +1,277 @@
+// Changelog
+// 2024-05-19: Добавлен маршрутизатор провайдеров и валидация параметров подключения.
 let
-  BasePath = "E:\github\ChEMBL_dataAcquisition\",    // пример: "E:\github\ChEMBL_dataAcquisition\"
-  SourceKind = "File",  // "File" | "SharePoint" | "Http"
-  SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
-  Paths = [
-    document_csv           = "data\input\full\document2.csv",
-    activity_csv           = "data\input\full\activity2.csv",
-    testitem_csv           = "data\input\full\testitem.csv",
-    citation_fraction_csv  = "dictionary\_curation\citation_fraction.csv",
+  // ===== Parameters =====
+  Parameters = [
+    BasePath = "E:\\github\\ChEMBL_dataAcquisition\\",    // пример: "E:\\github\\ChEMBL_dataAcquisition\\"
+    SourceKind = "File",  // "File" | "SharePoint" | "Http"
+    SharePointSiteUrl = "", // TODO: указать URL сайта SharePoint при SourceKind = "SharePoint"
+    Paths = [
+      document_csv = "data\\input\\full\\document2.csv",
+      activity_csv = "data\\input\\full\\activity2.csv",
+      testitem_csv = "data\\input\\full\\testitem.csv",
+      citation_fraction_csv = "dictionary\\_curation\\citation_fraction.csv",
 
-    document_csv_out       = "data\output\document\output.document_20250921.csv",
-    testitem_csv_out       = "data\output\testitem\output.testitem_all.csv",
-    assay_csv_out          = "data\output\assay\output.assay.csv",
-    target_csv_out         = "data\output\targets\output.target.csv"
+      document_csv_out = "data\\output\\document\\output.document_20250921.csv",
+      testitem_csv_out = "data\\output\\testitem\\output.testitem_all.csv",
+      assay_csv_out = "data\\output\\assay\\output.assay.csv",
+      target_csv_out = "data\\output\\targets\\output.target.csv"
+    ],
+    Encodings = [
+      Utf8 = 65001,
+      Latin1 = 1252
+    ],
+    Delimiters = [
+      Csv = ","
+    ],
+    PathEncodingKeys = [
+      document_csv = "Utf8",
+      activity_csv = "Utf8",
+      testitem_csv = "Utf8",
+      citation_fraction_csv = "Latin1",
 
+      document_csv_out = "Latin1",
+      testitem_csv_out = "Latin1",
+      assay_csv_out = "Latin1",
+      target_csv_out = "Latin1"
+    ]
   ],
-Data=[
-Document_in=LoadCsv(Paths[document_csv], Encodings[Utf8]),
-Activity_in=LoadCsv(Paths[activity_csv], Encodings[Utf8]),
-Testitem_in =LoadCsv(Paths[testitem_csv], Encodings[Utf8]),
+  BasePath = Parameters[BasePath],
+  SourceKind = Parameters[SourceKind],
+  SharePointSiteUrl = Parameters[SharePointSiteUrl],
+  Paths = Parameters[Paths],
+  Encodings = Parameters[Encodings],
+  Delimiters = Parameters[Delimiters],
+  PathEncodingKeys = Parameters[PathEncodingKeys],
 
-
-Target_out= LoadCsv(Paths[target_csv_out], Encodings[Latin1]),
-Document_out=LoadCsv(Paths[document_csv_out], Encodings[Latin1]),
-Assay_out=LoadCsv(Paths[assay_csv_out], Encodings[Latin1]),
-Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
-],
-  Encodings = [
-    Utf8   = 65001,
-    Latin1 = 1252
-  ],
-  Delimiters = [
-    Csv = ","
-  ],
-  PathEncodingKeys = [
-    document_csv = "Utf8",
-    activity_csv = "Utf8",
-    testitem_csv = "Utf8",
-    citation_fraction_csv = "Latin1",
-
-    document_csv_out       = "Latin1",
-    testitem_csv_out      = "Latin1",     
-    assay_csv_out = "Latin1",
-    target_csv_out = "Latin1"
-  ],
-// ===== IO Helpers =====
-  BuildAbsolutePath = (pathRel as text) as text => BasePath & pathRel,
-  CheckPathExists = (pathRel as text) as logical =>
+  // ===== Providers =====
+  Providers =
     let
-      absPath = BuildAbsolutePath(pathRel),
-      exists =
-        if SourceKind = "File" then
-          let probe = try File.Contents(absPath) otherwise null in probe <> null
-        else true
-    in
-      exists,
-  LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
-    let
-      absPath = BuildAbsolutePath(pathRel),
-      effectiveEncoding = if encoding <> null then encoding else Encodings[Utf8],
-      content =
-        if SourceKind = "File" then
-          File.Contents(absPath)
-        else if SourceKind = "Http" then
-          Web.Contents(absPath)
-        else if SourceKind = "SharePoint" then
-          let
-            _site = SharePointSiteUrl,
-            _todo = SharePoint.Contents(_site) // TODO: навигация к файлу и выбор нужного элемента
-          in
-            error "TODO: реализовать загрузку файла через SharePoint.Contents"
-        else
-          error "Unknown SourceKind",
-      csv = Csv.Document(content, [Delimiter = Delimiters[Csv], Encoding = effectiveEncoding]),
-      tbl = Table.PromoteHeaders(csv)
-    in
-      tbl,
-  ParamsSummary =
-    let
-      pathKeys = Record.FieldNames(Paths),
-      rows = List.Transform(pathKeys, (k) =>
+      BuildAbsolutePath = (relativePath as text) as text => BasePath & relativePath,
+      NormalizeSharePointPath = (relativePath as text) as text =>
         let
-          rel = Record.Field(Paths, k),
-          encKey = if Record.HasFields(PathEncodingKeys, k) then Record.Field(PathEncodingKeys, k) else null,
-          encValue = if encKey <> null and Record.HasFields(Encodings, encKey) then Record.Field(Encodings, encKey) else null,
-          available = CheckPathExists(rel)
+          cleaned = Text.Replace(relativePath, "\\", "/"),
+          trimmed = Text.Trim(cleaned, "/")
         in
-          [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
-      ),
-      header = {"path_key", "relative_path", "encoding_key", "encoding_value", "available"},
-      summary = #table(header, List.Transform(rows, each {_[path_key], _[relative_path], _[encoding_key], _[encoding_value], _[available]}))
-    in
-      summary,
-// ===== Helpers =====
-  ToText = (x as any) as text => if x = null then "" else Text.From(x),
-  CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
-    let
-      raw = Text.Lower(Text.Trim(ToText(txt))),
-      parts0 = List.Select(List.Transform(Text.Split(raw, "|"), each Text.Trim(_)), each _ <> ""),
-      mapped = List.Transform(parts0, each if alias <> null and Record.HasFields(alias, _) then Record.Field(alias, _) else _),
-      filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
-      dedup = List.Distinct(filtered),
-      ordered = if sort = true then List.Sort(dedup) else dedup,
-      out = Text.Combine(ordered, "|")
-    in
-      out,
-  TransformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
-    let
-      columnNames = Table.ColumnNames(tbl),
-      existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
-      transformed =
-        if culture <> null then
-          Table.TransformColumnTypes(tbl, existing, culture)
+          trimmed,
+      TrimTrailingSlash = (value as text) as text =>
+        if Text.EndsWith(value, "/") then
+          Text.Start(value, Text.Length(value) - 1)
         else
-          Table.TransformColumnTypes(tbl, existing)
+          value,
+      FileProvider = (relativePath as text) as binary =>
+        let
+          absPath = BuildAbsolutePath(relativePath),
+          // ===== External call: файловая система =====
+          attempt = try File.Contents(absPath)
+        in
+          if attempt[HasError] then
+            error Error.Record(
+              "FileAccessError",
+              Text.Format(
+                "Не удалось прочитать файл по пути \"#{0}\". Проверьте путь и права доступа.",
+                {absPath}
+              ),
+              attempt[Error]
+            )
+          else
+            attempt[Value],
+      HttpProvider = (relativePath as text) as binary =>
+        let
+          url = BuildAbsolutePath(relativePath),
+          // ===== External call: HTTP(S) запрос =====
+          attempt = try Web.Contents(url)
+        in
+          if attempt[HasError] then
+            error Error.Record(
+              "HttpAccessError",
+              Text.Format(
+                "Не удалось получить данные по адресу \"#{0}\" через HTTP.",
+                {url}
+              ),
+              attempt[Error]
+            )
+          else
+            attempt[Value],
+      SharePointProvider = (relativePath as text) as binary =>
+        let
+          siteUrlRaw = Text.Trim(SharePointSiteUrl),
+          _ensureConfigured =
+            if siteUrlRaw = "" then
+              error Error.Record(
+                "SharePointConfigurationError",
+                "Параметр SharePointSiteUrl не заполнен. Укажите URL сайта SharePoint в блоке Parameters.",
+                [SharePointSiteUrl = SharePointSiteUrl]
+              )
+            else
+              null,
+          siteUrl = TrimTrailingSlash(siteUrlRaw),
+          normalizedRelative = NormalizeSharePointPath(relativePath),
+          targetUrl = siteUrl & "/" & normalizedRelative,
+          // ===== External call: SharePoint.Files =====
+          filesAttempt = try SharePoint.Files(siteUrl, [ApiVersion = 15]),
+          files =
+            if filesAttempt[HasError] then
+              error Error.Record(
+                "SharePointAccessError",
+                Text.Format(
+                  "Не удалось подключиться к сайту SharePoint \"#{0}\". Проверьте URL и права доступа.",
+                  {siteUrl}
+                ),
+                filesAttempt[Error]
+              )
+            else
+              filesAttempt[Value],
+          enriched = Table.AddColumn(
+            files,
+            "absolute_path",
+            each Text.Replace(Text.Combine({[Folder Path], [Name]}, ""), "\\", "/"),
+            type text
+          ),
+          matched = Table.SelectRows(enriched, each [absolute_path] = targetUrl),
+          content =
+            if Table.RowCount(matched) = 0 then
+              error Error.Record(
+                "SharePointFileNotFound",
+                Text.Format(
+                  "Файл \"#{0}\" не найден на сайте SharePoint.",
+                  {normalizedRelative}
+                ),
+                [SiteUrl = siteUrl]
+              )
+            else
+              matched{0}[Content]
+        in
+          content,
+      GetBinary = (sourceKind as text, relativePath as text) as binary =>
+        let
+          normalizedKind = Text.Upper(Text.Trim(sourceKind)),
+          provider =
+            if normalizedKind = "FILE" then
+              FileProvider
+            else if normalizedKind = "HTTP" then
+              HttpProvider
+            else if normalizedKind = "SHAREPOINT" then
+              SharePointProvider
+            else
+              error Error.Record(
+                "SourceKindNotSupported",
+                Text.Format(
+                  "Источник данных \"#{0}\" не поддерживается. Используйте File, Http или SharePoint.",
+                  {sourceKind}
+                ),
+                null
+              )
+        in
+          provider(relativePath)
     in
-      transformed,
-  EnsureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
-    let
-      hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
-      result =
-        if hasColumn then
-          tbl
-        else if columnType <> null then
-          Table.AddColumn(tbl, columnName, each defaultValue, columnType)
-        else
-          Table.AddColumn(tbl, columnName, each defaultValue)
-    in
-      result,
+      [
+        BuildAbsolutePath = BuildAbsolutePath,
+        FileProvider = FileProvider,
+        HttpProvider = HttpProvider,
+        SharePointProvider = SharePointProvider,
+        GetBinary = GetBinary
+      ],
+
+  // ===== Loaders =====
+  Loaders = [
+    LoadCsv = (pathRel as text, optional encoding as nullable number) as table =>
+      let
+        effectiveEncoding = if encoding <> null then encoding else Encodings[Utf8],
+        // ===== External call: извлечение бинарного источника =====
+        content = Providers[GetBinary](SourceKind, pathRel),
+        csv = Csv.Document(content, [Delimiter = Delimiters[Csv], Encoding = effectiveEncoding]),
+        tbl = Table.PromoteHeaders(csv)
+      in
+        tbl
+  ],
+  LoadCsv = Loaders[LoadCsv],
+  Data = [
+    Document_in = LoadCsv(Paths[document_csv], Encodings[Utf8]),
+    Activity_in = LoadCsv(Paths[activity_csv], Encodings[Utf8]),
+    Testitem_in = LoadCsv(Paths[testitem_csv], Encodings[Utf8]),
+
+    Target_out = LoadCsv(Paths[target_csv_out], Encodings[Latin1]),
+    Document_out = LoadCsv(Paths[document_csv_out], Encodings[Latin1]),
+    Assay_out = LoadCsv(Paths[assay_csv_out], Encodings[Latin1]),
+    Testitem_out = LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
+  ],
+
+  // ===== Helpers =====
+  Helpers = [
+    BuildAbsolutePath = Providers[BuildAbsolutePath],
+    CheckPathExists = (pathRel as text) as logical =>
+      let
+        exists =
+          if SourceKind = "File" then
+            let
+              probe = try Providers[FileProvider](pathRel)
+            in
+              not probe[HasError]
+          else
+            true
+      in
+        exists,
+    ParamsSummary =
+      let
+        pathKeys = Record.FieldNames(Paths),
+        rows = List.Transform(pathKeys, (k) =>
+          let
+            rel = Record.Field(Paths, k),
+            encKey = if Record.HasFields(PathEncodingKeys, k) then Record.Field(PathEncodingKeys, k) else null,
+            encValue = if encKey <> null and Record.HasFields(Encodings, encKey) then Record.Field(Encodings, encKey) else null,
+            available = @Helpers[CheckPathExists](rel)
+          in
+            [path_key = k, relative_path = rel, encoding_key = encKey, encoding_value = encValue, available = available]
+        ),
+        header = {"path_key", "relative_path", "encoding_key", "encoding_value", "available"},
+        summary = #table(header, List.Transform(rows, each {_[path_key], _[relative_path], _[encoding_key], _[encoding_value], _[available]}))
+      in
+        summary,
+    ToText = (x as any) as text => if x = null then "" else Text.From(x),
+    CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
+      let
+        raw = Text.Lower(Text.Trim(@Helpers[ToText](txt))),
+        parts0 = List.Select(List.Transform(Text.Split(raw, "|"), each Text.Trim(_)), each _ <> ""),
+        mapped = List.Transform(parts0, each if alias <> null and Record.HasFields(alias, _) then Record.Field(alias, _) else _),
+        filtered = if drop <> null then List.Select(mapped, each not List.Contains(drop, _)) else mapped,
+        dedup = List.Distinct(filtered),
+        ordered = if sort = true then List.Sort(dedup) else dedup,
+        out = Text.Combine(ordered, "|")
+      in
+        out,
+    TransformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
+      let
+        columnNames = Table.ColumnNames(tbl),
+        existing = List.Select(typeList, each List.Contains(columnNames, _{0})),
+        transformed =
+          if culture <> null then
+            Table.TransformColumnTypes(tbl, existing, culture)
+          else
+            Table.TransformColumnTypes(tbl, existing)
+      in
+        transformed,
+    EnsureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
+      let
+        hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
+        result =
+          if hasColumn then
+            tbl
+          else if columnType <> null then
+            Table.AddColumn(tbl, columnName, each defaultValue, columnType)
+          else
+            Table.AddColumn(tbl, columnName, each defaultValue)
+      in
+        result
+  ],
+  BuildAbsolutePath = Helpers[BuildAbsolutePath],
+  CheckPathExists = Helpers[CheckPathExists],
+  ParamsSummary = Helpers[ParamsSummary],
+  ToText = Helpers[ToText],
+  CleanPipe = Helpers[CleanPipe],
+  TransformColumnTypesSafe = Helpers[TransformColumnTypesSafe],
+  EnsureColumn = Helpers[EnsureColumn],
+
 // ===================== document_input =====================
   citations = [
     get_reference = () => Data[Document_in],
