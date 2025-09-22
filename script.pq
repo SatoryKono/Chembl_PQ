@@ -32,6 +32,9 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
   Delimiters = [
     Csv = ","
   ],
+  Performance = [
+    SmallTableRowThreshold = 1000
+  ],
   PathEncodingKeys = [
     document_csv = "Utf8",
     activity_csv = "Utf8",
@@ -93,6 +96,13 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       summary,
 // ===== Helpers =====
   ToText = (x as any) as text => if x = null then "" else Text.From(x),
+  SplitPipesToList = (x as any) as list =>
+    let
+      txt = ToText(x),
+      parts = List.Transform(Text.Split(txt, "|"), each Text.Trim(_)),
+      out = List.Select(parts, each _ <> "")
+    in
+      out,
   CleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
     let
       raw = Text.Lower(Text.Trim(ToText(txt))),
@@ -127,6 +137,25 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           Table.AddColumn(tbl, columnName, each defaultValue)
     in
       result,
+  TableUtils = [
+    SelectColumns = (tbl as table, cols as list) as table =>
+      let
+        existing = List.Intersect({Table.ColumnNames(tbl), cols})
+      in
+        Table.SelectColumns(tbl, existing, MissingField.Ignore),
+    DropColumns = (tbl as table, cols as list) as table =>
+      let
+        keep = List.Difference(Table.ColumnNames(tbl), cols)
+      in
+        Table.SelectColumns(tbl, keep, MissingField.Ignore),
+    BufferSmall = (tbl as table, optional maxRows as nullable number) as table =>
+      let
+        limit = if maxRows <> null then maxRows else Performance[SmallTableRowThreshold],
+        rowCount = try Table.RowCount(tbl) otherwise limit + 1,
+        result = if rowCount <= limit then Table.Buffer(tbl) else tbl
+      in
+        result
+  ],
 // ===================== document_input =====================
   citations = [
     get_reference = () => Data[Document_in],
@@ -1610,10 +1639,10 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
         #"Removed Columns"
   ],
 
-  IUPHAR_int = () =>
+  IUPHAR_int = (Source as table) as table =>
     let
-      #"Removed Columns" = RemoveIfExists(
-        Data[Target_out],
+      #"Removed Columns" = TableUtils[DropColumns](
+        Source,
         {
           "isoform_ids",
           "isoform_names",
@@ -1674,9 +1703,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           "reaction_ec_numbers"
         }
       ),
-      #"Reordered Columns" = Table.ReorderColumns(
-        #"Removed Columns",
-        {
+      keep = {
           "target_chembl_id",
           "uniprot_id_primary",
           "secondaryAccessions",
@@ -1713,9 +1740,9 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
           "iuphar_full_id_path",
           "iuphar_full_name_path"
         },
-        MissingField.Ignore
-      ),
-      #"Removed Columns1" = RemoveIfExists(
+      #"Selected Columns" = TableUtils[SelectColumns](#"Removed Columns", keep),
+      #"Reordered Columns" = Table.ReorderColumns(#"Selected Columns", keep, MissingField.Ignore),
+      #"Removed Columns1" = TableUtils[DropColumns](
         #"Reordered Columns",
         {
           "uniprot_last_update",
@@ -1778,21 +1805,6 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
       Tbl = Table.FromRows(Rows, Type)
     in
       Tbl,
-// =====================================================
-// Helpers (общие)
-// =====================================================
-  RemoveIfExists = (tbl as table, cols as list) as table =>
-    let
-      keep = List.Difference(Table.ColumnNames(tbl), cols)
-    in
-      Table.SelectColumns(tbl, keep),
-  SplitPipesToList = (x as any) as list =>
-    let
-      txt = ToText(x),
-      parts = List.Transform(Text.Split(txt, "|"), each Text.Trim(_)),
-      out = List.Select(parts, each _ <> "")
-    in
-      out,
 // =====================================================
 // Cellularity rules (офлайн)
 // =====================================================
@@ -1891,7 +1903,7 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
   PTM = [
     ParseAAList = (src as table, columnName as text, mapToken as function, optional keepPos as nullable logical) as table =>
       let
-        X0 = RemoveIfExists(src, {}),
+        X0 = TableUtils[DropColumns](src, {}),
         col = columnName,
         L0 = X0{0}?,
         V0 = X0[col],
@@ -1939,114 +1951,507 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
   ],
 
 // =====================================================
-// target record (модуль функций)
+// Target modules
 // =====================================================
-  target = [
-    isoform = (Source as table) as table =>
-      let
-        T1 = Table.SelectColumns(Source, {"isoform_synonyms", "isoform_names", "isoform_ids", "uniprot_id_primary", "target_chembl_id"}),
-        T2 = Table.TransformColumns(T1, {{"isoform_synonyms", each Text.Lower(ToText(_)), type text}, {"isoform_names", each Text.Lower(ToText(_)), type text}}),
-        T3 = Table.TransformColumns(T2, {{"isoform_synonyms", each SplitPipesToList(_), type list}, {"isoform_names", each SplitPipesToList(_), type list}, {"isoform_ids", each SplitPipesToList(_), type list}}),
-        MakeTriples = (names as list, ids as list, syns as list) as list =>
+  TargetIupharIdColumns = {
+    "iuphar_target_id",
+    "iuphar_family_id",
+    "iuphar_type",
+    "iuphar_class",
+    "iuphar_subclass",
+    "iuphar_chain",
+    "iuphar_full_id_path",
+    "iuphar_full_name_path"
+  },
+  TargetPredictedColumns = {
+    "protein_class_pred_L1",
+    "protein_class_pred_L2",
+    "protein_class_pred_L3",
+    "protein_class_pred_rule_id",
+    "protein_class_pred_evidence",
+    "protein_class_pred_confidence"
+  },
+  TargetIupharExtendedColumns = List.Combine({TargetIupharIdColumns, {"iuphar_name"}}),
+  TargetMainExportDropColumns = List.Combine({TargetPredictedColumns, TargetIupharExtendedColumns}),
+  TargetIupharMergeDropColumns = List.Combine({TargetIupharIdColumns, TargetPredictedColumns}),
+  TargetIupharCleanupColumns = List.Combine({
+    TargetPredictedColumns,
+    {
+      "ec_number",
+      "gene_name",
+      "synonyms",
+      "organism",
+      "taxon_id",
+      "lineage_superkingdom",
+      "lineage_phylum",
+      "lineage_class",
+      "cellularity",
+      "multifunctional_enzyme",
+      "known_id"
+    }
+  }),
+  TargetKnownCleanupColumns = List.Combine({
+    TargetPredictedColumns,
+    {
+      "gene_name",
+      "synonyms",
+      "organism",
+      "taxon_id",
+      "lineage_superkingdom",
+      "lineage_phylum",
+      "lineage_class",
+      "cellularity",
+      "multifunctional_enzyme"
+    }
+  }),
+  TargetExportColumns = {
+    "target_chembl_id",
+    "uniprot_id_primary",
+    "secondaryAccessions",
+    "gene_symbol",
+    "protein_name_canonical",
+    "sequence_length",
+    "features_transmembrane",
+    "features_topology",
+    "xref_iuphar",
+    "gtop_target_id",
+    "uniprot_last_update",
+    "uniprot_version",
+    "pipeline_version",
+    "timestamp_utc",
+    "recommended_name",
+    "gene_name",
+    "molecular_function",
+    "cellular_component",
+    "subcellular_location",
+    "topology",
+    "GuidetoPHARMACOLOGY",
+    "synonyms",
+    "1.taxon_id",
+    "lineage_superkingdom",
+    "lineage_phylum",
+    "lineage_class",
+    "reaction_ec_numbers",
+    "cellularity",
+    "multifunctional_enzyme",
+    "iuphar_name",
+    "iuphar_target_id",
+    "iuphar_family_id",
+    "iuphar_type",
+    "iuphar_class",
+    "iuphar_subclass",
+    "iuphar_chain",
+    "iuphar_full_id_path",
+    "iuphar_full_name_path"
+  },
+
+  TargetMainIsoforms = (Source as table) as table =>
+    let
+      trimmed = TableUtils[SelectColumns](
+        Source,
+        {
+          "isoform_synonyms",
+          "isoform_names",
+          "isoform_ids",
+          "uniprot_id_primary",
+          "target_chembl_id"
+        }
+      ),
+      lowered = Table.TransformColumns(
+        trimmed,
+        {
+          {"isoform_synonyms", each Text.Lower(ToText(_)), type text},
+          {"isoform_names", each Text.Lower(ToText(_)), type text}
+        }
+      ),
+      lists = Table.TransformColumns(
+        lowered,
+        {
+          {"isoform_synonyms", each SplitPipesToList(_), type list},
+          {"isoform_names", each SplitPipesToList(_), type list},
+          {"isoform_ids", each SplitPipesToList(_), type list}
+        }
+      ),
+      MakeTriples = (names as list, ids as list, syns as list) as list =>
+        let
+          n = List.Max({List.Count(names), List.Count(ids), List.Count(syns)}),
+          idx = if n = 0 then {} else {0 .. n - 1},
+          recs = List.Transform(
+            idx,
+            (i) =>
+              [
+                name = if i < List.Count(names) then names{i} else null,
+                id = if i < List.Count(ids) then ids{i} else null,
+                synonym = if i < List.Count(syns) then syns{i} else null
+              ]
+          )
+        in
+          recs,
+      withTriples = Table.AddColumn(lists, "triples", each MakeTriples([isoform_names], [isoform_ids], [isoform_synonyms]), type list),
+      expandedTriples = Table.ExpandListColumn(withTriples, "triples"),
+      expanded = Table.ExpandRecordColumn(expandedTriples, "triples", {"name", "id", "synonym"}),
+      SynExpand = (s as any) as list =>
+        let
+          t = Text.Trim(Text.Lower(ToText(s))),
+          v = List.Distinct(List.Select({t, Text.Replace(t, "pde", ""), Text.Replace(t, "pld", "")}, each _ <> ""))
+        in
+          v,
+      withTokens = Table.AddColumn(
+        expanded,
+        "tokens",
+        each
           let
-            n = List.Max({List.Count(names), List.Count(ids), List.Count(syns)}),
-            idx = if n = 0 then {} else {0 .. n - 1},
-            recs = List.Transform(idx, (i) => [name = if i < List.Count(names) then names{i} else null, id = if i < List.Count(ids) then ids{i} else null, synonym = if i < List.Count(syns) then syns{i} else null])
+            parts = List.Transform(Text.Split(ToText([synonym]), ":"), each Text.Trim(_)),
+            nonEmpty = List.Select(parts, each _ <> ""),
+            variants = List.Distinct(List.Combine(List.Transform(nonEmpty, each SynExpand(_))))
           in
-            recs,
-        WithTriples = Table.AddColumn(T3, "triples", each MakeTriples([isoform_names], [isoform_ids], [isoform_synonyms]), type list),
-        Rows = Table.ExpandListColumn(WithTriples, "triples"),
-        Expanded = Table.ExpandRecordColumn(Rows, "triples", {"name", "id", "synonym"}),
-        SynExpand = (s as any) as list =>
+            variants,
+        type list
+      ),
+      namesOnly = Table.TransformColumns(TableUtils[SelectColumns](expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}), {{"name", each Text.Trim(ToText(_)), type text}}),
+      namesFiltered = Table.SelectRows(namesOnly, each [name] <> "" and [name] <> "n/a" and [name] <> "none"),
+      syns = TableUtils[SelectColumns](withTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}),
+      synsExpanded = Table.ExpandListColumn(syns, "tokens"),
+      synsClean = Table.RenameColumns(
+        Table.SelectRows(Table.TransformColumns(synsExpanded, {{"tokens", each Text.Trim(ToText(_)), type text}}), each [tokens] <> "" and [tokens] <> "n/a" and [tokens] <> "none"),
+        {{"tokens", "name"}}
+      ),
+      combined = Table.Combine({namesFiltered, synsClean}),
+      dedup = Table.Distinct(combined, {"id", "name", "target_chembl_id", "uniprot_id_primary"}),
+      sorted = Table.Sort(dedup, {{"uniprot_id_primary", Order.Ascending}, {"id", Order.Ascending}}),
+      out = Table.Distinct(sorted, {"id", "name"})
+    in
+      out,
+
+  TargetMainCrossReferences = (Source as table) as table =>
+    let
+      drop = {
+        "isoform_ids",
+        "isoform_names",
+        "isoform_synonyms",
+        "organism",
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "xref_chembl",
+        "gtop_synonyms",
+        "gtop_natural_ligands_n",
+        "gtop_interactions_n",
+        "gtop_function_text_short",
+        "uniProtkbId",
+        "hgnc_name",
+        "secondaryAccessions",
+        "transmembrane",
+        "intramembrane",
+        "hgnc_id",
+        "features_signal_peptide",
+        "tax_id",
+        "species_group_flag",
+        "family",
+        "xref_uniprot",
+        "gene_symbol",
+        "protein_name_canonical",
+        "protein_name_alt",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "ptm_glycosylation",
+        "ptm_lipidation",
+        "ptm_disulfide_bond",
+        "ptm_modified_residue",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "recommendedName",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "glycosylation",
+        "lipidation",
+        "disulfide_bond",
+        "modified_residue",
+        "phosphorylation",
+        "acetylation",
+        "ubiquitination",
+        "signal_peptide",
+        "propeptide",
+        "gene_symbol_list",
+        "protein_synonym_list",
+        "reactions",
+        "reaction_ec_numbers",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      trimmed = TableUtils[DropColumns](Source, drop),
+      keepOrder = {
+        "target_chembl_id",
+        "uniprot_id_primary",
+        "secondaryAccessions",
+        "gene_symbol",
+        "protein_name_canonical",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "xref_iuphar",
+        "gtop_target_id",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "GuidetoPHARMACOLOGY",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      selected = TableUtils[SelectColumns](trimmed, keepOrder),
+      drop2 = {
+        "secondaryAccessions",
+        "gene_symbol",
+        "protein_name_canonical",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "xref_iuphar",
+        "gtop_target_id",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "GuidetoPHARMACOLOGY",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      out = TableUtils[DropColumns](selected, drop2)
+    in
+      out,
+
+  TargetOrganismPrepare = (Source as table) as table =>
+    let
+      base = TableUtils[SelectColumns](
+        Source,
+        {
+          "target_chembl_id",
+          "uniprot_id_primary",
+          "organism",
+          "taxon_id",
+          "lineage_superkingdom",
+          "lineage_phylum",
+          "lineage_class",
+          "reaction_ec_numbers"
+        }
+      ),
+      lower = Table.TransformColumns(
+        base,
+        {
+          {"lineage_superkingdom", Text.Lower, type text},
+          {"lineage_phylum", Text.Lower, type text},
+          {"lineage_class", Text.Lower, type text}
+        }
+      ),
+      withCell = Cellularity_[AddCellularitySmart](lower, "taxon_id", "lineage_superkingdom", "lineage_class"),
+      ecMainList = Table.AddColumn(
+        withCell,
+        "ec_major_list",
+        each
           let
-            t = Text.Trim(Text.Lower(ToText(s))),
-            v = List.Distinct(List.Select({t, Text.Replace(t, "pde", ""), Text.Replace(t, "pld", "")}, each _ <> ""))
+            items = SplitPipesToList([reaction_ec_numbers])
           in
-            v,
-        WithTokens = Table.AddColumn(
-          Expanded,
-          "tokens",
-          each
-            let
-              parts = List.Transform(Text.Split(ToText([synonym]), ":"), each Text.Trim(_)),
-              nonEmpty = List.Select(parts, each _ <> ""),
-              variants = List.Distinct(List.Combine(List.Transform(nonEmpty, each SynExpand(_))))
-            in
-              variants,
-          type list
-        ),
-        Names = Table.SelectColumns(Expanded, {"id", "uniprot_id_primary", "target_chembl_id", "name"}),
-        NamesClean = Table.SelectRows(Table.TransformColumns(Names, {{"name", each Text.Trim(ToText(_)), type text}}), each [name] <> "" and [name] <> "n/a" and [name] <> "none"),
-        Syns = Table.SelectColumns(WithTokens, {"id", "uniprot_id_primary", "target_chembl_id", "tokens"}),
-        SynsExploded = Table.ExpandListColumn(Syns, "tokens"),
-        SynsClean = Table.RenameColumns(Table.SelectRows(Table.TransformColumns(SynsExploded, {{"tokens", each Text.Trim(ToText(_)), type text}}), each [tokens] <> "" and [tokens] <> "n/a" and [tokens] <> "none"), {{"tokens", "name"}}),
-        Combined = Table.Combine({NamesClean, SynsClean}),
-        Dedup = Table.Distinct(Combined, {"id", "name", "target_chembl_id", "uniprot_id_primary"}),
-        Sorted = Table.Sort(Dedup, {{"uniprot_id_primary", Order.Ascending}, {"id", Order.Ascending}}),
-        Out = Table.Distinct(Sorted, {"id", "name"})
-      in
-        Out,
-    crossref = (Source as table) as table =>
-      let
-        drop =
+            List.Distinct(List.Transform(items, each if Text.Contains(_, ".") then Text.Split(_, "."){0} else _)),
+        type list
+      ),
+      multifn = Table.AddColumn(ecMainList, "multifunctional_enzyme", each List.Count([ec_major_list]) > 1, type logical),
+      out = Table.RemoveColumns(multifn, {"ec_major_list"})
+    in
+      out,
+
+  TargetMainNames = (Source as table) as table =>
+    let
+      drop = {
+        "isoform_ids",
+        "isoform_names",
+        "isoform_synonyms",
+        "organism",
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "xref_chembl",
+        "gtop_synonyms",
+        "gtop_natural_ligands_n",
+        "gtop_interactions_n",
+        "gtop_function_text_short",
+        "uniProtkbId",
+        "hgnc_name",
+        "secondaryAccessions",
+        "transmembrane",
+        "intramembrane",
+        "hgnc_id",
+        "features_signal_peptide",
+        "tax_id",
+        "species_group_flag",
+        "family",
+        "xref_uniprot",
+        "xref_ensembl",
+        "pfam",
+        "interpro",
+        "xref_pdb",
+        "xref_alphafold",
+        "SUPFAM",
+        "PROSITE",
+        "InterPro",
+        "Pfam",
+        "PRINTS",
+        "TCDB",
+        "target_type",
+        "protein_classifications",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "ptm_glycosylation",
+        "ptm_lipidation",
+        "ptm_disulfide_bond",
+        "ptm_modified_residue"
+      },
+      trimmed = TableUtils[DropColumns](Source, drop),
+      keep = {
+        "target_chembl_id",
+        "recommendedName",
+        "geneName",
+        "pref_name",
+        "uniprot_id_primary",
+        "gene_symbol",
+        "protein_name_canonical",
+        "protein_name_alt",
+        "xref_iuphar",
+        "gtop_target_id",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "secondaryAccessions",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "glycosylation",
+        "lipidation",
+        "disulfide_bond",
+        "modified_residue",
+        "phosphorylation",
+        "acetylation",
+        "ubiquitination",
+        "signal_peptide",
+        "propeptide",
+        "GuidetoPHARMACOLOGY",
+        "target_components",
+        "cross_references",
+        "gene_symbol_list",
+        "protein_synonym_list",
+        "reactions",
+        "reaction_ec_numbers",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      selected = TableUtils[SelectColumns](trimmed, keep),
+      transformed = Table.TransformColumns(
+        selected,
+        {
+          {"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "["", ""), ""]", "")), type text},
+          {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "["", ""), ""]", "") in if s = "[]" or s = "" then null else s, type nullable text}
+        }
+      ),
+      splitComponents = try Table.SplitColumn(transformed, "target_components", Splitter.SplitTextByEachDelimiter({"""component_description": """}, QuoteStyle.None, false), {"tc1", "tc2"}) otherwise transformed,
+      splitDetail = try Table.SplitColumn(splitComponents, "tc2", Splitter.SplitTextByEachDelimiter({"", """}, QuoteStyle.None, false), {"tc2a", "tc2b"}) otherwise splitComponents,
+      trimmedComponents = TableUtils[DropColumns](splitDetail, {"tc1", "tc2b"}),
+      reorder = Table.ReorderColumns(
+        trimmedComponents,
+        List.Intersect({{"uniprot_id_primary", "protein_name_alt", "tc2a", "recommendedName", "pref_name", "protein_name_canonical", "geneName", "gene_symbol_list"}, Table.ColumnNames(trimmedComponents)}),
+        MissingField.Ignore
+      ),
+      lowered = Table.TransformColumns(
+        reorder,
+        {
+          {"geneName", Text.Lower, type text},
+          {"gene_symbol_list", Text.Lower, type text},
+          {"protein_name_canonical", ToText, type text},
+          {"pref_name", ToText, type text}
+        }
+      ),
+      synonyms = Table.AddColumn(
+        lowered,
+        "synonyms",
+        each
+          let
+            parts = List.RemoveNulls({[protein_name_canonical], [pref_name], [tc2a], [protein_name_alt], [gene_symbol_list]})
+          in
+            Text.Combine(List.Distinct(List.Combine(List.Transform(parts, SplitPipesToList))), "|"),
+        type text
+      ),
+      renamed = Table.RenameColumns(
+        TableUtils[DropColumns](
+          synonyms,
           {
-            "isoform_ids",
-            "isoform_names",
-            "isoform_synonyms",
-            "organism",
-            "taxon_id",
-            "lineage_superkingdom",
-            "lineage_phylum",
-            "lineage_class",
-            "xref_chembl",
-            "gtop_synonyms",
-            "gtop_natural_ligands_n",
-            "gtop_interactions_n",
-            "gtop_function_text_short",
-            "uniProtkbId",
-            "hgnc_name",
-            "secondaryAccessions",
-            "transmembrane",
-            "intramembrane",
-            "hgnc_id",
-            "features_signal_peptide",
-            "tax_id",
-            "species_group_flag",
-            "family",
-            "xref_uniprot",
-            "gene_symbol",
-            "protein_name_canonical",
-            "protein_name_alt",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "ptm_glycosylation",
-            "ptm_lipidation",
-            "ptm_disulfide_bond",
-            "ptm_modified_residue",
-            "uniprot_last_update",
-            "uniprot_version",
-            "pipeline_version",
-            "timestamp_utc",
-            "recommendedName",
-            "geneName",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "glycosylation",
-            "lipidation",
-            "disulfide_bond",
-            "modified_residue",
-            "phosphorylation",
-            "acetylation",
-            "ubiquitination",
-            "signal_peptide",
-            "propeptide",
-            "gene_symbol_list",
-            "protein_synonym_list",
-            "reactions",
-            "reaction_ec_numbers",
             "protein_class_pred_L1",
             "protein_class_pred_L2",
             "protein_class_pred_L3",
@@ -2062,668 +2467,582 @@ Testitem_out =LoadCsv(Paths[testitem_csv_out], Encodings[Latin1])
             "iuphar_name",
             "iuphar_full_id_path",
             "iuphar_full_name_path",
-            "protein_classifications",
-            "pref_name",
-            "target_type",
-            "target_components",
-            "target_chembl_id",
-            "pfam",
-            "interpro"
-          },
-        Out = RemoveIfExists(Source, drop)
-      in
-        Out,
-    activity = (Source as table) as table =>
-      let
-        drop =
-          {
-            "isoform_ids",
-            "isoform_names",
-            "isoform_synonyms",
-            "organism",
-            "taxon_id",
-            "lineage_superkingdom",
-            "lineage_phylum",
-            "lineage_class",
-            "xref_chembl",
-            "gtop_synonyms",
-            "gtop_natural_ligands_n",
-            "gtop_interactions_n",
-            "gtop_function_text_short",
-            "uniProtkbId",
-            "hgnc_name",
-            "secondaryAccessions",
-            "transmembrane",
-            "intramembrane",
-            "hgnc_id",
-            "features_signal_peptide",
-            "tax_id",
-            "species_group_flag",
-            "family",
-            "xref_uniprot",
-            "xref_ensembl",
-            "pfam",
-            "interpro",
-            "xref_pdb",
-            "xref_alphafold",
-            "SUPFAM",
-            "PROSITE",
-            "InterPro",
-            "Pfam",
-            "PRINTS",
-            "TCDB",
-            "target_type",
-            "protein_classifications",
-            "protein_name_alt",
-            "recommendedName",
-            "pref_name",
-            "target_components",
             "cross_references",
-            "gene_symbol_list",
-            "protein_synonym_list",
-            "ptm_glycosylation",
-            "ptm_lipidation",
-            "ptm_disulfide_bond",
-            "ptm_modified_residue",
-            "glycosylation",
-            "lipidation",
-            "disulfide_bond",
-            "modified_residue",
-            "phosphorylation",
-            "acetylation",
-            "ubiquitination",
-            "signal_peptide",
-            "propeptide",
-            "gene_symbol",
-            "protein_name_canonical",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "xref_iuphar",
-            "gtop_target_id",
-            "uniprot_last_update",
-            "uniprot_version",
-            "pipeline_version",
-            "timestamp_utc",
-            "secondaryAccessions",
-            "geneName",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "GuidetoPHARMACOLOGY",
-            "protein_class_pred_L1",
-            "protein_class_pred_L2",
-            "protein_class_pred_L3",
-            "protein_class_pred_rule_id",
-            "protein_class_pred_evidence",
-            "protein_class_pred_confidence",
-            "iuphar_target_id",
-            "iuphar_family_id",
-            "iuphar_type",
-            "iuphar_class",
-            "iuphar_subclass",
-            "iuphar_chain",
-            "iuphar_name",
-            "iuphar_full_id_path",
-            "iuphar_full_name_path"
-          },
-        X = RemoveIfExists(Source, drop),
-        Out = Table.SelectRows(X, each ToText([reaction_ec_numbers]) <> "")
-      in
-        Out,
-    metadata = (Source as table) as table =>
-      let
-        drop1 =
-          {
-            "isoform_ids",
-            "isoform_names",
-            "isoform_synonyms",
-            "organism",
-            "taxon_id",
-            "lineage_superkingdom",
-            "lineage_phylum",
-            "lineage_class",
-            "xref_chembl",
-            "gtop_synonyms",
-            "gtop_natural_ligands_n",
-            "gtop_interactions_n",
-            "gtop_function_text_short",
-            "uniProtkbId",
-            "hgnc_name",
-            "secondaryAccessions",
-            "transmembrane",
-            "intramembrane",
-            "hgnc_id",
-            "features_signal_peptide",
-            "tax_id",
-            "species_group_flag",
-            "family",
-            "xref_uniprot",
-            "xref_ensembl",
-            "pfam",
-            "interpro",
-            "xref_pdb",
-            "xref_alphafold",
-            "SUPFAM",
-            "PROSITE",
-            "InterPro",
-            "Pfam",
-            "PRINTS",
-            "TCDB",
-            "target_type",
-            "protein_classifications",
-            "protein_name_alt",
-            "recommendedName",
-            "pref_name",
-            "target_components",
-            "cross_references",
-            "gene_symbol_list",
-            "protein_synonym_list",
-            "ptm_glycosylation",
-            "ptm_lipidation",
-            "ptm_disulfide_bond",
-            "ptm_modified_residue",
-            "glycosylation",
-            "lipidation",
-            "disulfide_bond",
-            "modified_residue",
-            "phosphorylation",
-            "acetylation",
-            "ubiquitination",
-            "signal_peptide",
-            "propeptide",
             "reactions",
             "reaction_ec_numbers"
-          },
-        R0 = RemoveIfExists(Source, drop1),
-        keepOrder =
-          {
-            "target_chembl_id",
-            "uniprot_id_primary",
-            "secondaryAccessions",
-            "gene_symbol",
-            "protein_name_canonical",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "xref_iuphar",
-            "gtop_target_id",
-            "uniprot_last_update",
-            "uniprot_version",
-            "pipeline_version",
-            "timestamp_utc",
-            "geneName",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "GuidetoPHARMACOLOGY",
-            "protein_class_pred_L1",
-            "protein_class_pred_L2",
-            "protein_class_pred_L3",
-            "protein_class_pred_rule_id",
-            "protein_class_pred_evidence",
-            "protein_class_pred_confidence",
-            "iuphar_target_id",
-            "iuphar_family_id",
-            "iuphar_type",
-            "iuphar_class",
-            "iuphar_subclass",
-            "iuphar_chain",
-            "iuphar_name",
-            "iuphar_full_id_path",
-            "iuphar_full_name_path"
-          },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
-        drop2 =
-          {
-            "secondaryAccessions",
-            "gene_symbol",
-            "protein_name_canonical",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "xref_iuphar",
-            "gtop_target_id",
-            "geneName",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "GuidetoPHARMACOLOGY",
-            "protein_class_pred_L1",
-            "protein_class_pred_L2",
-            "protein_class_pred_L3",
-            "protein_class_pred_rule_id",
-            "protein_class_pred_evidence",
-            "protein_class_pred_confidence",
-            "iuphar_target_id",
-            "iuphar_family_id",
-            "iuphar_type",
-            "iuphar_class",
-            "iuphar_subclass",
-            "iuphar_chain",
-            "iuphar_name",
-            "iuphar_full_id_path",
-            "iuphar_full_name_path"
-          },
-        Out = RemoveIfExists(R1, drop2)
-      in
-        Out,
-    organism = (Source as table) as table =>
-      let
-        base = Table.SelectColumns(Source, {"target_chembl_id", "uniprot_id_primary", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers"}),
-        lower = Table.TransformColumns(base, {{"lineage_superkingdom", Text.Lower, type text}, {"lineage_phylum", Text.Lower, type text}, {"lineage_class", Text.Lower, type text}}),
-        withCell = Cellularity_[AddCellularitySmart](lower, "taxon_id", "lineage_superkingdom", "lineage_class"),
-        ecMainList = Table.AddColumn(withCell, "ec_major_list", each let items = SplitPipesToList([reaction_ec_numbers]) in List.Distinct(List.Transform(items, each if Text.Contains(_, ".") then Text.Split(_, "."){0} else _)), type list),
-        multifn = Table.AddColumn(ecMainList, "multifunctional_enzyme", each List.Count([ec_major_list]) > 1, type logical),
-        out = Table.RemoveColumns(multifn, {"ec_major_list"})
-      in
-        out,
-
-    name = (Source as table) as table =>
-      let
-        drop =
-          {
-            "isoform_ids",
-            "isoform_names",
-            "isoform_synonyms",
-            "organism",
-            "taxon_id",
-            "lineage_superkingdom",
-            "lineage_phylum",
-            "lineage_class",
-            "xref_chembl",
-            "gtop_synonyms",
-            "gtop_natural_ligands_n",
-            "gtop_interactions_n",
-            "gtop_function_text_short",
-            "uniProtkbId",
-            "hgnc_name",
-            "secondaryAccessions",
-            "transmembrane",
-            "intramembrane",
-            "hgnc_id",
-            "features_signal_peptide",
-            "tax_id",
-            "species_group_flag",
-            "family",
-            "xref_uniprot",
-            "xref_ensembl",
-            "pfam",
-            "interpro",
-            "xref_pdb",
-            "xref_alphafold",
-            "SUPFAM",
-            "PROSITE",
-            "InterPro",
-            "Pfam",
-            "PRINTS",
-            "TCDB",
-            "target_type",
-            "protein_classifications",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "ptm_glycosylation",
-            "ptm_lipidation",
-            "ptm_disulfide_bond",
-            "ptm_modified_residue"
-          },
-        R0 = RemoveIfExists(Source, drop),
-        keep =
-          {
-            "target_chembl_id",
-            "recommendedName",
-            "geneName",
-            "pref_name",
-            "uniprot_id_primary",
-            "gene_symbol",
-            "protein_name_canonical",
-            "protein_name_alt",
-            "xref_iuphar",
-            "gtop_target_id",
-            "uniprot_last_update",
-            "uniprot_version",
-            "pipeline_version",
-            "timestamp_utc",
-            "secondaryAccessions",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "glycosylation",
-            "lipidation",
-            "disulfide_bond",
-            "modified_residue",
-            "phosphorylation",
-            "acetylation",
-            "ubiquitination",
-            "signal_peptide",
-            "propeptide",
-            "GuidetoPHARMACOLOGY",
-            "target_components",
-            "cross_references",
-            "gene_symbol_list",
-            "protein_synonym_list",
-            "reactions",
-            "reaction_ec_numbers",
-            "protein_class_pred_L1",
-            "protein_class_pred_L2",
-            "protein_class_pred_L3",
-            "protein_class_pred_rule_id",
-            "protein_class_pred_evidence",
-            "protein_class_pred_confidence",
-            "iuphar_target_id",
-            "iuphar_family_id",
-            "iuphar_type",
-            "iuphar_class",
-            "iuphar_subclass",
-            "iuphar_chain",
-            "iuphar_name",
-            "iuphar_full_id_path",
-            "iuphar_full_name_path"
-          },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keep})),
-        R2 = Table.TransformColumns(R1, {{"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "")), type text}, {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "[""", ""), """]", "") in if s = "[]" or s = "" then null else s, type nullable text}}),
-        TComp = try Table.SplitColumn(R2, "target_components", Splitter.SplitTextByEachDelimiter({"""component_description"": """}, QuoteStyle.None, false), {"tc1", "tc2"}) otherwise R2,
-        TComp2 = try Table.SplitColumn(TComp, "tc2", Splitter.SplitTextByEachDelimiter({""", """}, QuoteStyle.None, false), {"tc2a", "tc2b"}) otherwise TComp,
-        TComp3 = RemoveIfExists(TComp2, {"tc1", "tc2b"}),
-        R3 = Table.ReorderColumns(
-          TComp3,
-          List.Intersect({{"uniprot_id_primary", "protein_name_alt", "tc2a", "recommendedName", "pref_name", "protein_name_canonical", "geneName", "gene_symbol_list"}, Table.ColumnNames(TComp3)}),
-          MissingField.Ignore
+          }
         ),
-        R4 = Table.TransformColumns(R3, {{"geneName", Text.Lower, type text}, {"gene_symbol_list", Text.Lower, type text}, {"protein_name_canonical", ToText, type text}, {"pref_name", ToText, type text}}),
-        Syn = Table.AddColumn(R4, "synonyms", each let parts = List.RemoveNulls({[protein_name_canonical], [pref_name], [tc2a], [protein_name_alt], [gene_symbol_list]}) in Text.Combine(List.Distinct(List.Combine(List.Transform(parts, SplitPipesToList))), "|"), type text),
-        Out0 = Table.RenameColumns(RemoveIfExists(Syn, {"protein_class_pred_L1", "protein_class_pred_L2", "protein_class_pred_L3", "protein_class_pred_rule_id", "protein_class_pred_evidence", "protein_class_pred_confidence", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_name", "iuphar_full_id_path", "iuphar_full_name_path", "cross_references", "reactions", "reaction_ec_numbers"}), {{"recommendedName", "recommended_name"}, {"geneName", "gene_name"}})
-      in
-        Out0,
-    main = (Source as table) as table =>
+        {{"recommendedName", "recommended_name"}, {"geneName", "gene_name"}}
+      )
+    in
+      renamed,
+
+  TargetMainPrepare = (Source as table) as table =>
+    let
+      drop = {
+        "isoform_ids",
+        "isoform_names",
+        "isoform_synonyms",
+        "organism",
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "xref_chembl",
+        "gtop_synonyms",
+        "gtop_natural_ligands_n",
+        "gtop_interactions_n",
+        "gtop_function_text_short",
+        "uniProtkbId",
+        "hgnc_name",
+        "secondaryAccessions",
+        "transmembrane",
+        "intramembrane",
+        "hgnc_id",
+        "features_signal_peptide",
+        "tax_id",
+        "species_group_flag",
+        "family",
+        "xref_uniprot",
+        "xref_ensembl",
+        "pfam",
+        "interpro",
+        "xref_pdb",
+        "xref_alphafold",
+        "SUPFAM",
+        "PROSITE",
+        "InterPro",
+        "Pfam",
+        "PRINTS",
+        "TCDB",
+        "target_type",
+        "protein_classifications",
+        "protein_name_alt",
+        "recommendedName",
+        "pref_name",
+        "target_components",
+        "cross_references",
+        "gene_symbol_list",
+        "protein_synonym_list",
+        "ptm_glycosylation",
+        "ptm_lipidation",
+        "ptm_disulfide_bond",
+        "ptm_modified_residue",
+        "glycosylation",
+        "lipidation",
+        "disulfide_bond",
+        "modified_residue",
+        "phosphorylation",
+        "acetylation",
+        "ubiquitination",
+        "signal_peptide",
+        "propeptide",
+        "reactions",
+        "reaction_ec_numbers"
+      },
+      trimmed = TableUtils[DropColumns](Source, drop),
+      keepOrder = {
+        "target_chembl_id",
+        "uniprot_id_primary",
+        "secondaryAccessions",
+        "gene_symbol",
+        "protein_name_canonical",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "xref_iuphar",
+        "gtop_target_id",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "GuidetoPHARMACOLOGY",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      selected = TableUtils[SelectColumns](trimmed, keepOrder),
+      reordered = Table.ReorderColumns(selected, List.Intersect({keepOrder, Table.ColumnNames(selected)}), MissingField.Ignore),
+      renamed = Table.RenameColumns(
+        reordered,
+        {{"recommendedName", "recommended_name"}, {"geneName", "gene_name"}},
+        MissingField.Ignore
+      ),
+      joinedNames = Table.NestedJoin(
+        renamed,
+        {"target_chembl_id", "uniprot_id_primary"},
+        TargetMainNames(Source),
+        {"target_chembl_id", "uniprot_id_primary"},
+        "nm",
+        JoinKind.LeftOuter
+      ),
+      expandedNames = Table.ExpandTableColumn(
+        joinedNames,
+        "nm",
+        {"recommended_name", "gene_name", "synonyms"},
+        {"recommended_name", "gene_name", "synonyms"}
+      )
+    in
+      expandedNames,
+
+  TargetMainPTM = [
+    phosphorylation = (Source as table) as table => PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "phosphorylation", PTM[MapPhospho], true),
+    acetylation = (Source as table) as table => PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "acetylation", PTM[MapAA1], true),
+    glycosylation = (Source as table) as table => PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "glycosylation", (s) => if s = "asparagine" then "N" else if s = "serine" then "S" else if s = "threonine" then "T" else PTM[MapAA1](s), true),
+    modified_residue = (Source as table) as table => PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "modified_residue", PTM[MapAA1], true),
+    disulfide_bond = (Source as table) as table =>
       let
-        drop =
-          {
-            "isoform_ids",
-            "isoform_names",
-            "isoform_synonyms",
-            "organism",
-            "taxon_id",
-            "lineage_superkingdom",
-            "lineage_phylum",
-            "lineage_class",
-            "xref_chembl",
-            "gtop_synonyms",
-            "gtop_natural_ligands_n",
-            "gtop_interactions_n",
-            "gtop_function_text_short",
-            "uniProtkbId",
-            "hgnc_name",
-            "secondaryAccessions",
-            "transmembrane",
-            "intramembrane",
-            "hgnc_id",
-            "features_signal_peptide",
-            "tax_id",
-            "species_group_flag",
-            "family",
-            "xref_uniprot",
-            "xref_ensembl",
-            "pfam",
-            "interpro",
-            "xref_pdb",
-            "xref_alphafold",
-            "SUPFAM",
-            "PROSITE",
-            "InterPro",
-            "Pfam",
-            "PRINTS",
-            "TCDB",
-            "target_type",
-            "protein_classifications",
-            "protein_name_alt",
-            "recommendedName",
-            "pref_name",
-            "target_components",
-            "cross_references",
-            "gene_symbol_list",
-            "protein_synonym_list",
-            "ptm_glycosylation",
-            "ptm_lipidation",
-            "ptm_disulfide_bond",
-            "ptm_modified_residue",
-            "glycosylation",
-            "lipidation",
-            "disulfide_bond",
-            "modified_residue",
-            "phosphorylation",
-            "acetylation",
-            "ubiquitination",
-            "signal_peptide",
-            "propeptide",
-            "reactions",
-            "reaction_ec_numbers"
-          },
-        R0 = RemoveIfExists(Source, drop),
-        keepOrder =
-          {
-            "target_chembl_id",
-            "uniprot_id_primary",
-            "secondaryAccessions",
-            "gene_symbol",
-            "protein_name_canonical",
-            "sequence_length",
-            "features_transmembrane",
-            "features_topology",
-            "xref_iuphar",
-            "gtop_target_id",
-            "uniprot_last_update",
-            "uniprot_version",
-            "pipeline_version",
-            "timestamp_utc",
-            "geneName",
-            "molecular_function",
-            "cellular_component",
-            "subcellular_location",
-            "topology",
-            "GuidetoPHARMACOLOGY",
-            "protein_class_pred_L1",
-            "protein_class_pred_L2",
-            "protein_class_pred_L3",
-            "protein_class_pred_rule_id",
-            "protein_class_pred_evidence",
-            "protein_class_pred_confidence",
-            "iuphar_target_id",
-            "iuphar_family_id",
-            "iuphar_type",
-            "iuphar_class",
-            "iuphar_subclass",
-            "iuphar_chain",
-            "iuphar_name",
-            "iuphar_full_id_path",
-            "iuphar_full_name_path"
-          },
-        R1 = Table.SelectColumns(R0, List.Intersect({Table.ColumnNames(R0), keepOrder})),
-        R2 = RemoveIfExists(R1, {"uniprot_last_update", "uniprot_version", "pipeline_version", "timestamp_utc", "geneName", "xref_iuphar", "gtop_target_id", "GuidetoPHARMACOLOGY", "sequence_length", "features_transmembrane", "features_topology", "molecular_function", "cellular_component", "subcellular_location", "topology"}),
-        Jn = Table.NestedJoin(R2, {"target_chembl_id", "uniprot_id_primary"}, name(Source), {"target_chembl_id", "uniprot_id_primary"}, "nm", JoinKind.LeftOuter),
-        Ex = Table.ExpandTableColumn(Jn, "nm", {"recommended_name", "gene_name", "synonyms"}, {"recommended_name", "gene_name", "synonyms"}),
-        Out = RemoveIfExists(Table.TransformColumns(Ex, {{"gene_name", Text.Lower, type text}}), {"protein_name_canonical", "gene_symbol"})
+        T = PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "disulfide_bond", (s) => s, true)
       in
-        Out,
-    PTM = [
-      phosphorylation = (Source as table) as table => PTM[ParseAAList](RemoveIfExists(Source, {}), "phosphorylation", PTM[MapPhospho], true),
-      acetylation = (Source as table) as table => PTM[ParseAAList](RemoveIfExists(Source, {}), "acetylation", PTM[MapAA1], true),
-      glycosylation = (Source as table) as table => PTM[ParseAAList](RemoveIfExists(Source, {}), "glycosylation", (s) => if s = "asparagine" then "N" else if s = "serine" then "S" else if s = "threonine" then "T" else PTM[MapAA1](s), true),
-      modified_residue = (Source as table) as table => PTM[ParseAAList](RemoveIfExists(Source, {}), "modified_residue", PTM[MapAA1], true),
-      disulfide_bond = (Source as table) as table => let T = PTM[ParseAAList](RemoveIfExists(Source, {}), "disulfide_bond", (s) => s, true) in Table.RenameColumns(T, {{"Count", "n_disulfide_bond"}, {"aa_list", "disulfide_bond_list"}}),
-      propeptide = (Source as table) as table =>
-        let
-          MapProp = (s as text) as text =>
-            let
-              t =
+        Table.RenameColumns(T, {{"Count", "n_disulfide_bond"}, {"aa_list", "disulfide_bond_list"}}),
+    propeptide = (Source as table) as table =>
+      let
+        MapProp = (s as text) as text =>
+          let
+            t = Text.Replace(
+              Text.Replace(
                 Text.Replace(
                   Text.Replace(
                     Text.Replace(
                       Text.Replace(
                         Text.Replace(
                           Text.Replace(
-                            Text.Replace(
-                              Text.Replace(
-                                Text.Replace(
-                                  Text.Replace(Text.Lower(s), "removed in mature form", "del"),
-                                  "n-terminally processed",
-                                  "del"
-                                ),
-                                "removed by plasmin",
-                                "del"
-                              ),
-                              "removed by furin",
-                              "del"
-                            ),
-                            "removed for receptor activation",
+                            Text.Replace(Text.Lower(s), "removed in mature form", "del"),
+                            "n-terminally processed",
                             "del"
                           ),
-                          "removed by bmp1",
+                          "removed by plasmin",
                           "del"
                         ),
-                        "activation peptide (connecting region)",
-                        "act"
+                        "removed by furin",
+                        "del"
                       ),
-                      "activation peptide",
-                      "act"
+                      "removed for receptor activation",
+                      "del"
                     ),
-                    "inhibition peptide",
-                    "act"
+                    "removed by bmp1",
+                    "del"
                   ),
-                  "linker peptide",
-                  "lnk"
-                )
-            in
-              Text.Replace(t, "interdomain linker", "lnk"),
-          T = PTM[ParseAAList](RemoveIfExists(Source, {}), "propeptide", MapProp, false)
-        in
-          Table.RenameColumns(T, {{"Count", "n_propeptide"}, {"aa_list", "propeptide_list"}}),
-      lipidation = (Source as table) as table =>
-        let
-          map = (s as text) as text => PTM[MapAA1](s),
-          T = PTM[ParseAAList](RemoveIfExists(Source, {}), "lipidation", map, true)
-        in
-          Table.RenameColumns(T, {{"Count", "n_lipidation"}, {"aa_list", "lipidation_list"}})
-    ],
-
-    IUPHAR = () as table =>
-      let
-        NormalizeTable19 = () as table =>
-          let
-            T0 = table19(),
-            T1 = Table.TransformColumnTypes(
-              T0,
-              {
-                {"ec", Int64.Type},
-                {"iuphar_target_id", type text},
-                {"iuphar_family_id", type text},
-                {"iuphar_type", type text},
-                {"iuphar_class", type text},
-                {"iuphar_subclass", type text},
-                {"iuphar_chain", type text},
-                {"iuphar_full_id_path", type text},
-                {"iuphar_full_name_path", type text},
-                {"Column1", type text},
-                {"Column2", type text}
-              }
-            ),
-            C1 = Table.ReplaceValue(T1, "Enzyme: Protease", "Enzyme", Replacer.ReplaceText, {"Column1"}),
-            C2 = Table.ReplaceValue(C1, "Enzyme: Kinase", "Enzyme", Replacer.ReplaceText, {"Column1"}),
-            C3 = Table.ReplaceValue(C2, "Ion Channel: Voltage-gated", "Voltage-gated", Replacer.ReplaceText, {"Column2"}),
-            C4 = Table.ReplaceValue(C3, "Ion Channel: Ligand-gated", "Ligand-gated", Replacer.ReplaceText, {"Column2"}),
-            Out = Table.SelectRows(C4, each [Column1] <> null)
+                  "activation peptide (connecting region)",
+                  "act"
+                ),
+                "activation peptide",
+                "act"
+              ),
+              "inhibition peptide",
+              "act"
+            )
           in
-            Out,
-        T19 = Table.Buffer(NormalizeTable19()),
-        IupharIdCols = {"iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"},
-        PredCols = {"protein_class_pred_L1", "protein_class_pred_L2", "protein_class_pred_L3", "protein_class_pred_rule_id", "protein_class_pred_evidence", "protein_class_pred_confidence"},
-        IUPHAR_All = List.Combine({IupharIdCols, PredCols}),
-        A0 = internal_target[main](Data[Target_out]),
-        JOrg = Table.NestedJoin(A0, {"target_chembl_id"}, internal_target[organism](Data[Target_out]), {"target_chembl_id"}, "org", JoinKind.LeftOuter),
-        EOrg = Table.ExpandTableColumn(JOrg, "org", {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"}, {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"}),
-        JAct = Table.NestedJoin(EOrg, {"target_chembl_id", "uniprot_id_primary"}, internal_target[activity](Data[Target_out]), {"target_chembl_id", "uniprot_id_primary"}, "act", JoinKind.LeftOuter),
-        EAct = Table.ExpandTableColumn(JAct, "act", {"reaction_ec_numbers"}, {"ec_number"}),
-        MergeIUPHAR = (src as table) as table =>
-          let
-            src0 = RemoveIfExists(src, IUPHAR_All),
-            j = Table.NestedJoin(src0, {"target_chembl_id"}, IUPHAR_int(), {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter),
-            e = Table.ExpandTableColumn(j, "IUPHAR", IUPHAR_All, IUPHAR_All)
-          in
-            e,
-        MDir = MergeIUPHAR(EAct),
-        Base = Table.SelectRows(MDir, each ToText([iuphar_family_id]) <> "N/A" or ToText([cellularity]) = "unicellular"),
-        BaseDrop = RemoveIfExists(Base, {"gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_number"}),
-        ran5 = (S as table) as table =>
-          let
-            M1 = MergeIUPHAR(S),
-            F0 = Table.SelectRows(M1, each ToText([iuphar_full_id_path]) = ""),
-            F = RemoveIfExists(F0, IupharIdCols),
-            J = Table.NestedJoin(F, {"protein_class_pred_L1"}, T19, {"iuphar_class"}, "T19", JoinKind.LeftOuter),
-            E = Table.ExpandTableColumn(J, "T19", IupharIdCols & {"Column1", "Column2"}, IupharIdCols & {"Column1", "Column2"}),
-            F2 = Table.SelectRows(E, each [Column2] <> null),
-            Out = RemoveIfExists(F2, {"Column1", "Column2"})
-          in
-            Out,
-        ran6 = (S as table) as table =>
-          let
-            M1 = MergeIUPHAR(S),
-            F0 = Table.SelectRows(M1, each ToText([iuphar_full_id_path]) = ""),
-            F = RemoveIfExists(F0, IupharIdCols),
-            J = Table.NestedJoin(F, {"protein_class_pred_L2"}, T19, {"Column2"}, "T19", JoinKind.LeftOuter),
-            E = Table.ExpandTableColumn(J, "T19", IupharIdCols & {"Column1", "Column2"}, IupharIdCols & {"Column1", "Column2"}),
-            F2 = Table.SelectRows(E, each [iuphar_chain] <> null),
-            D1 = Table.Distinct(F2, {"target_chembl_id", "uniprot_id_primary"}),
-            Out = Table.Distinct(D1, {"target_chembl_id"})
-          in
-            Out,
-        ran4 = (S as table) as table =>
-          let
-            M1 = MergeIUPHAR(S),
-            F0 = Table.SelectRows(M1, each ToText([iuphar_family_id]) = "N/A" and ToText([cellularity]) = "multicellular" and [ec_number] <> null),
-            S2 = Table.SplitColumn(F0, "ec_number", Splitter.SplitTextByEachDelimiter({"."}, null, false), {"ec_major", "ec_minor"}),
-            F1 = Table.SelectRows(S2, each [ec_major] <> "3"),
-            T = Table.TransformColumnTypes(F1, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
-            J = Table.NestedJoin(T, {"ec_major"}, T19, {"ec"}, "T19", JoinKind.LeftOuter),
-            Jnd = RemoveIfExists(J, IupharIdCols),
-            E = Table.ExpandTableColumn(Jnd, "T19", IupharIdCols, IupharIdCols),
-            App = Table.Combine({E, ran5(S), ran6(S)}),
-            D = Table.Distinct(App, {"target_chembl_id"}),
-            Drop = RemoveIfExists(D, {"secondaryAccessions", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_major", "ec_minor", "Column1", "Column2"})
-          in
-            Drop,
-        Known1 = Table.Combine({BaseDrop, ran4(EAct)}),
-        Known_table = Table.Distinct(Known1, {"target_chembl_id"}),
-        J0 = Table.NestedJoin(EAct, {"target_chembl_id"}, Known_table, {"target_chembl_id"}, "K", JoinKind.LeftOuter),
-        E0 = Table.ExpandTableColumn(J0, "K", {"target_chembl_id"}, {"known_id"}),
-        F0 = Table.SelectRows(E0, each [known_id] = null),
-        D0 = Table.Distinct(F0, {"target_chembl_id"}),
-        F1 = D0,
-        F2 = Table.AddColumn(F1, "ec_key", each 100, Int64.Type),
-        J1 = Table.NestedJoin(F2, {"ec_key"}, T19, {"ec"}, "T19", JoinKind.LeftOuter),
-        #"Removed Columns" = RemoveIfExists(J1, {"iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_name", "iuphar_full_id_path", "iuphar_full_name_path"}),
-        E1 = Table.ExpandTableColumn(#"Removed Columns", "T19", IupharIdCols, IupharIdCols),
-        Out1 = RemoveIfExists(E1, {"ec_number", "ec_key"}),
-        All = Table.Combine({Known_table, Out1}),
-        Final = Table.Distinct(All, {"target_chembl_id"}),
-        Out = RemoveIfExists(Final, PredCols & {"ec_number", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "known_id"})
+            Text.Replace(t, "interdomain linker", "lnk"),
+        T = PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "propeptide", MapProp, false)
       in
-        Out
+        Table.RenameColumns(T, {{"Count", "n_propeptide"}, {"aa_list", "propeptide_list"}}),
+    lipidation = (Source as table) as table =>
+      let
+        map = (s as text) as text => PTM[MapAA1](s),
+        T = PTM[ParseAAList](TableUtils[DropColumns](Source, {}), "lipidation", map, true)
+      in
+        Table.RenameColumns(T, {{"Count", "n_lipidation"}, {"aa_list", "lipidation_list"}})
+  ],
+
+  TargetActivityPrepare = (Source as table) as table =>
+    let
+      drop = {
+        "isoform_ids",
+        "isoform_names",
+        "isoform_synonyms",
+        "organism",
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "xref_chembl",
+        "gtop_synonyms",
+        "gtop_natural_ligands_n",
+        "gtop_interactions_n",
+        "gtop_function_text_short",
+        "uniProtkbId",
+        "hgnc_name",
+        "secondaryAccessions",
+        "transmembrane",
+        "intramembrane",
+        "hgnc_id",
+        "features_signal_peptide",
+        "tax_id",
+        "species_group_flag",
+        "family",
+        "xref_uniprot",
+        "xref_ensembl",
+        "pfam",
+        "interpro",
+        "xref_pdb",
+        "xref_alphafold",
+        "SUPFAM",
+        "PROSITE",
+        "InterPro",
+        "Pfam",
+        "PRINTS",
+        "TCDB",
+        "target_type",
+        "protein_classifications",
+        "protein_name_alt",
+        "recommendedName",
+        "pref_name",
+        "target_components",
+        "cross_references",
+        "gene_symbol_list",
+        "protein_synonym_list",
+        "ptm_glycosylation",
+        "ptm_lipidation",
+        "ptm_disulfide_bond",
+        "ptm_modified_residue",
+        "glycosylation",
+        "lipidation",
+        "disulfide_bond",
+        "modified_residue",
+        "phosphorylation",
+        "acetylation",
+        "ubiquitination",
+        "signal_peptide",
+        "propeptide",
+        "gene_symbol",
+        "protein_name_canonical",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "xref_iuphar",
+        "gtop_target_id",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "secondaryAccessions",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "GuidetoPHARMACOLOGY",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      trimmed = TableUtils[DropColumns](Source, drop),
+      filtered = Table.SelectRows(trimmed, each ToText([reaction_ec_numbers]) <> "")
+    in
+      filtered,
+
+  TargetActivityMetadata = (Source as table) as table =>
+    let
+      drop1 = {
+        "isoform_ids",
+        "isoform_names",
+        "isoform_synonyms",
+        "organism",
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "xref_chembl",
+        "gtop_synonyms",
+        "gtop_natural_ligands_n",
+        "gtop_interactions_n",
+        "gtop_function_text_short",
+        "uniProtkbId",
+        "hgnc_name",
+        "secondaryAccessions",
+        "transmembrane",
+        "intramembrane",
+        "hgnc_id",
+        "features_signal_peptide",
+        "tax_id",
+        "species_group_flag",
+        "family",
+        "xref_uniprot",
+        "xref_ensembl",
+        "pfam",
+        "interpro",
+        "xref_pdb",
+        "xref_alphafold",
+        "SUPFAM",
+        "PROSITE",
+        "InterPro",
+        "Pfam",
+        "PRINTS",
+        "TCDB",
+        "target_type",
+        "protein_classifications",
+        "protein_name_alt",
+        "recommendedName",
+        "pref_name",
+        "target_components",
+        "cross_references",
+        "gene_symbol_list",
+        "protein_synonym_list",
+        "ptm_glycosylation",
+        "ptm_lipidation",
+        "ptm_disulfide_bond",
+        "ptm_modified_residue",
+        "glycosylation",
+        "lipidation",
+        "disulfide_bond",
+        "modified_residue",
+        "phosphorylation",
+        "acetylation",
+        "ubiquitination",
+        "signal_peptide",
+        "propeptide",
+        "reactions",
+        "reaction_ec_numbers"
+      },
+      trimmed = TableUtils[DropColumns](Source, drop1),
+      keep = {
+        "target_chembl_id",
+        "uniprot_id_primary",
+        "secondaryAccessions",
+        "gene_symbol",
+        "protein_name_canonical",
+        "sequence_length",
+        "features_transmembrane",
+        "features_topology",
+        "xref_iuphar",
+        "gtop_target_id",
+        "uniprot_last_update",
+        "uniprot_version",
+        "pipeline_version",
+        "timestamp_utc",
+        "geneName",
+        "molecular_function",
+        "cellular_component",
+        "subcellular_location",
+        "topology",
+        "GuidetoPHARMACOLOGY",
+        "protein_class_pred_L1",
+        "protein_class_pred_L2",
+        "protein_class_pred_L3",
+        "protein_class_pred_rule_id",
+        "protein_class_pred_evidence",
+        "protein_class_pred_confidence",
+        "iuphar_target_id",
+        "iuphar_family_id",
+        "iuphar_type",
+        "iuphar_class",
+        "iuphar_subclass",
+        "iuphar_chain",
+        "iuphar_name",
+        "iuphar_full_id_path",
+        "iuphar_full_name_path"
+      },
+      selected = TableUtils[SelectColumns](trimmed, keep)
+    in
+      selected,
+
+  TargetContext = (Source as table) as record =>
+    let
+      mainPrepared = TargetMainPrepare(Source),
+      organismPrepared = TargetOrganismPrepare(Source),
+      activityPrepared = TargetActivityPrepare(Source)
+    in
+      [
+        Source = Source,
+        Main = mainPrepared,
+        Organism = organismPrepared,
+        Activity = activityPrepared
+      ],
+
+  TargetIupharNormalize = () as table =>
+    let
+      raw = table19(),
+      typed = Table.TransformColumnTypes(
+        raw,
+        {
+          {"ec", Int64.Type},
+          {"iuphar_target_id", type text},
+          {"iuphar_family_id", type text},
+          {"iuphar_type", type text},
+          {"iuphar_class", type text},
+          {"iuphar_subclass", type text},
+          {"iuphar_chain", type text},
+          {"iuphar_full_id_path", type text},
+          {"iuphar_full_name_path", type text},
+          {"Column1", type text},
+          {"Column2", type text}
+        }
+      ),
+      normalized = Table.ReplaceValue(Table.ReplaceValue(Table.ReplaceValue(typed, "Enzyme: Protease", "Enzyme", Replacer.ReplaceText, {"Column1"}), "Enzyme: Kinase", "Enzyme", Replacer.ReplaceText, {"Column1"}), "Ion Channel: Voltage-gated", "Voltage-gated", Replacer.ReplaceText, {"Column2"}), "Ion Channel: Ligand-gated", "Ligand-gated", Replacer.ReplaceText, {"Column2"}),
+      filtered = Table.SelectRows(normalized, each [Column1] <> null),
+      buffered = TableUtils[BufferSmall](filtered)
+    in
+      buffered,
+
+  TargetIupharBuildContext = (ctx as record) as record =>
+    let
+      mainPrepared = ctx[Main],
+      organismPrepared = ctx[Organism],
+      activityPrepared = ctx[Activity],
+      source = ctx[Source],
+      dictionary = TargetIupharNormalize(),
+      iupharSource = IUPHAR_int(source),
+      mergeIuphar = (tbl as table) as table =>
+        let
+          trimmed = TableUtils[DropColumns](tbl, TargetIupharMergeDropColumns),
+          joined = Table.NestedJoin(trimmed, {"target_chembl_id"}, iupharSource, {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter),
+          expandCols = List.Intersect({Table.ColumnNames(iupharSource), TargetIupharMergeDropColumns}),
+          expanded = if List.Count(expandCols) = 0 then joined else Table.ExpandTableColumn(joined, "IUPHAR", expandCols, expandCols)
+        in
+          expanded,
+      joinedOrganism = Table.NestedJoin(mainPrepared, {"target_chembl_id"}, organismPrepared, {"target_chembl_id"}, "org", JoinKind.LeftOuter),
+      expandedOrganism = Table.ExpandTableColumn(
+        joinedOrganism,
+        "org",
+        {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"},
+        {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"}
+      ),
+      joinedActivity = Table.NestedJoin(expandedOrganism, {"target_chembl_id", "uniprot_id_primary"}, activityPrepared, {"target_chembl_id", "uniprot_id_primary"}, "act", JoinKind.LeftOuter),
+      enrichedActivity = Table.ExpandTableColumn(joinedActivity, "act", {"reaction_ec_numbers"}, {"ec_number"}),
+      merged = mergeIuphar(enrichedActivity),
+      base = Table.SelectRows(merged, each ToText([iuphar_family_id]) <> "N/A" or ToText([cellularity]) = "unicellular"),
+      baseDrop = TableUtils[DropColumns](base, {"gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_number"}),
+      ran5 = (S as table) as table =>
+        let
+          mergedLocal = mergeIuphar(S),
+          filteredEmpty = Table.SelectRows(mergedLocal, each ToText([iuphar_full_id_path]) = ""),
+          trimmedLocal = TableUtils[DropColumns](filteredEmpty, TargetIupharIdColumns),
+          joinedLocal = Table.NestedJoin(trimmedLocal, {"protein_class_pred_L1"}, dictionary, {"iuphar_class"}, "T19", JoinKind.LeftOuter),
+          expandedLocal = Table.ExpandTableColumn(joinedLocal, "T19", TargetIupharIdColumns & {"Column1", "Column2"}, TargetIupharIdColumns & {"Column1", "Column2"}),
+          filteredLocal = Table.SelectRows(expandedLocal, each [Column2] <> null)
+        in
+          TableUtils[DropColumns](filteredLocal, {"Column1", "Column2"}),
+      ran6 = (S as table) as table =>
+        let
+          mergedLocal = mergeIuphar(S),
+          filteredEmpty = Table.SelectRows(mergedLocal, each ToText([iuphar_full_id_path]) = ""),
+          trimmedLocal = TableUtils[DropColumns](filteredEmpty, TargetIupharIdColumns),
+          joinedLocal = Table.NestedJoin(trimmedLocal, {"protein_class_pred_L2"}, dictionary, {"Column2"}, "T19", JoinKind.LeftOuter),
+          expandedLocal = Table.ExpandTableColumn(joinedLocal, "T19", TargetIupharIdColumns & {"Column1", "Column2"}, TargetIupharIdColumns & {"Column1", "Column2"}),
+          filteredLocal = Table.SelectRows(expandedLocal, each [iuphar_chain] <> null),
+          distinctLocal = Table.Distinct(filteredLocal, {"target_chembl_id", "uniprot_id_primary"})
+        in
+          Table.Distinct(distinctLocal, {"target_chembl_id"}),
+      ran4 = (S as table) as table =>
+        let
+          mergedLocal = mergeIuphar(S),
+          filteredLocal = Table.SelectRows(mergedLocal, each ToText([iuphar_family_id]) = "N/A" and ToText([cellularity]) = "multicellular" and [ec_number] <> null),
+          splitEc = Table.SplitColumn(filteredLocal, "ec_number", Splitter.SplitTextByEachDelimiter({"."}, null, false), {"ec_major", "ec_minor"}),
+          filteredEc = Table.SelectRows(splitEc, each [ec_major] <> "3"),
+          typedEc = Table.TransformColumnTypes(filteredEc, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
+          joinedLocal = Table.NestedJoin(typedEc, {"ec_major"}, dictionary, {"ec"}, "T19", JoinKind.LeftOuter),
+          cleanedLocal = TableUtils[DropColumns](joinedLocal, TargetIupharIdColumns),
+          expandedLocal = Table.ExpandTableColumn(cleanedLocal, "T19", TargetIupharIdColumns, TargetIupharIdColumns),
+          appended = Table.Combine({expandedLocal, ran5(S), ran6(S)}),
+          distinctTargets = Table.Distinct(appended, {"target_chembl_id"}),
+          dropExtras = TableUtils[DropColumns](distinctTargets, {"secondaryAccessions", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_major", "ec_minor", "Column1", "Column2"})
+        in
+          dropExtras,
+      knownBase = Table.Combine({baseDrop, ran4(enrichedActivity)}),
+      knownDistinct = Table.Distinct(knownBase, {"target_chembl_id"}),
+      joinedKnown = Table.NestedJoin(enrichedActivity, {"target_chembl_id"}, knownDistinct, {"target_chembl_id"}, "K", JoinKind.LeftOuter),
+      expandedKnown = Table.ExpandTableColumn(joinedKnown, "K", {"target_chembl_id"}, {"known_id"}),
+      unknown = Table.SelectRows(expandedKnown, each [known_id] = null),
+      unknownDistinct = Table.Distinct(unknown, {"target_chembl_id"}),
+      unknownWithKey = Table.AddColumn(unknownDistinct, "ec_key", each 100, Int64.Type),
+      joinedDictionary = Table.NestedJoin(unknownWithKey, {"ec_key"}, dictionary, {"ec"}, "T19", JoinKind.LeftOuter),
+      removedKnown = TableUtils[DropColumns](joinedDictionary, TargetIupharIdColumns),
+      expandedDictionary = Table.ExpandTableColumn(removedKnown, "T19", TargetIupharIdColumns, TargetIupharIdColumns),
+      filledUnknown = TableUtils[DropColumns](expandedDictionary, {"ec_number", "ec_key"}),
+      allAssignments = Table.Combine({knownDistinct, filledUnknown}),
+      finalDistinct = Table.Distinct(allAssignments, {"target_chembl_id"}),
+      assignments = TableUtils[DropColumns](finalDistinct, TargetIupharCleanupColumns),
+      knownClean = TableUtils[DropColumns](knownDistinct, TargetKnownCleanupColumns)
+    in
+      [
+        Assignments = assignments,
+        Known = knownClean
+      ],
+
+  TargetIupharAssignments = (ctx as record) as table => TargetIupharBuildContext(ctx)[Assignments],
+
+  TargetIupharKnown = (ctx as record) as table => TargetIupharBuildContext(ctx)[Known],
+
+  TargetMain = [
+    Isoforms = TargetMainIsoforms,
+    CrossReferences = TargetMainCrossReferences,
+    Names = TargetMainNames,
+    Prepare = TargetMainPrepare,
+    PTM = TargetMainPTM
+  ],
+  TargetOrganism = [Prepare = TargetOrganismPrepare],
+  TargetActivity = [Prepare = TargetActivityPrepare, Metadata = TargetActivityMetadata],
+  TargetIUPHAR = [
+    NormalizeDictionary = TargetIupharNormalize,
+    BuildContext = TargetIupharBuildContext,
+    Assignments = TargetIupharAssignments,
+    Known = TargetIupharKnown
+  ],
+  TargetKnown = [Prepare = TargetIupharKnown],
+  target = [
+    main = TargetMain,
+    organism = TargetOrganism,
+    activity = TargetActivity,
+    IUPHAR = TargetIUPHAR,
+    known = TargetKnown,
+    context = TargetContext
   ],
   get_target = () =>
     let
-      main1 = target[main](Data[Target_out]),
-      #"Removed Columns" = RemoveIfExists(main1, {"protein_class_pred_L1", "protein_class_pred_L2", "protein_class_pred_L3", "protein_class_pred_rule_id", "protein_class_pred_evidence", "protein_class_pred_confidence", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_name", "iuphar_full_id_path", "iuphar_full_name_path"}),
-      #"Merged Queries1" = Table.NestedJoin(#"Removed Columns", {"target_chembl_id"}, target[organism](Data[Target_out]), {"target_chembl_id"}, "NewColumn.1"),
-      aa = Table.ExpandTableColumn(#"Merged Queries1", "NewColumn.1", {"taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"}, {"1.taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"}),
-      #"2Merged Queries1" = Table.NestedJoin(aa, {"target_chembl_id"}, target[IUPHAR](), {"target_chembl_id"}, "NewColumn.1"),
-      #"Expanded NewColumn.1" = Table.ExpandTableColumn(#"2Merged Queries1", "NewColumn.1", {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"}, {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"})
+      source = Data[Target_out],
+      ctx = target[context](source),
+      mainPrepared = ctx[Main],
+      mainClean = TableUtils[DropColumns](mainPrepared, TargetMainExportDropColumns),
+      organismTable = ctx[Organism],
+      joinedOrganism = Table.NestedJoin(mainClean, {"target_chembl_id"}, organismTable, {"target_chembl_id"}, "organism", JoinKind.LeftOuter),
+      expandedOrganism = Table.ExpandTableColumn(
+        joinedOrganism,
+        "organism",
+        {"taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"},
+        {"1.taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "reaction_ec_numbers", "cellularity", "multifunctional_enzyme"}
+      ),
+      iupharAssignments = target[IUPHAR][Assignments](ctx),
+      joinedIuphar = Table.NestedJoin(expandedOrganism, {"target_chembl_id"}, iupharAssignments, {"target_chembl_id"}, "iuphar", JoinKind.LeftOuter),
+      expandedIuphar = Table.ExpandTableColumn(
+        joinedIuphar,
+        "iuphar",
+        {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"},
+        {"iuphar_name", "iuphar_target_id", "iuphar_family_id", "iuphar_type", "iuphar_class", "iuphar_subclass", "iuphar_chain", "iuphar_full_id_path", "iuphar_full_name_path"}
+      ),
+      selected = TableUtils[SelectColumns](expandedIuphar, TargetExportColumns),
+      ordered = Table.ReorderColumns(selected, TargetExportColumns, MissingField.Ignore)
     in
-      #"Expanded NewColumn.1",
+      ordered,
   data_validation = Record.AddField(data_validation_base, "get_target", get_target)
 in
   [
