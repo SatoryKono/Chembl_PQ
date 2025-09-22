@@ -1617,23 +1617,24 @@ let
           ordered = Table.ReorderColumns(withoutVerbose, List.Sort(Table.ColumnNames(withoutVerbose)))
         in
           ordered,
+
+
       // ===== BuildDocumentTable =====
       // Inputs:
-      //   - DocumentInput[MergeSources]: первичный набор атрибутов документа.
-      //   - Validation[ValidateAll]: результаты нормализации DOI, названий и страниц.
-      //   - citations: классификации и агрегаты активности/цитирований.
+      //   - DocumentInput[MergeSources]: объединяет данные документа по всем источникам.
+      //   - Validation[ValidateAll]: рассчитывает нормализованные атрибуты документа.
+      //   - citations[get_reference], citations[get_citations_fraction]: добавляют классификации и агрегаты цитирования.
       // Output:
-      //   - Таблица документов с очищенной схемой для downstream-потребителей.
+      //   - Таблица документов с согласованной схемой и типами для downstream-потребителей.
       BuildDocumentTable = () as table =>
         let
-          documentSource = Data[Document_out],
-          mergedSources = DocumentInput[MergeSources](documentSource),
-          validatedRows = Validation[ValidateAll](mergedSources),
+          documentSource = DocumentInput[MergeSources](Data[Document_out]),
+          validatedRows = Validation[ValidateAll](documentSource),
           validationFrame = BuildValidationFrame(validatedRows),
-          preparedForJoin = TransformColumnTypesSafe(validationFrame, {{"PMID", type text}}),
+          pmidPrepared = Helpers[TransformColumnTypesSafe](validationFrame, {{"PMID", type text}}),
           referenceTable = citations[get_reference](),
           withReference = Table.NestedJoin(
-            preparedForJoin,
+            pmidPrepared,
             {"PMID"},
             referenceTable,
             {"pubmed_id"},
@@ -1646,10 +1647,13 @@ let
             {"classification", "document_contains_external_links", "is_experimental_doc"},
             {"review", "document_contains_external_links", "is_experimental_doc"}
           ),
-          reviewNormalized = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {"review"}),
-          reviewTyped = TransformColumnTypesSafe(reviewNormalized, {{"review", Int64.Type}}),
-          reviewLogical = TransformColumnTypesSafe(reviewTyped, {{"review", type logical}}),
-          ensuredDocumentId = EnsureColumn(reviewLogical, "ChEMBL.document_chembl_id", null, type text),
+          reviewSanitized =
+            let
+              replaced = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {"review"}),
+              typedNumber = Helpers[TransformColumnTypesSafe](replaced, {{"review", Int64.Type}})
+            in
+              Helpers[TransformColumnTypesSafe](typedNumber, {{"review", type logical}}),
+          ensuredDocumentId = EnsureColumn(reviewSanitized, "ChEMBL.document_chembl_id", null, type text),
           metricsTable = citations[get_citations_fraction](),
           withMetrics = Table.NestedJoin(
             ensuredDocumentId,
@@ -1663,52 +1667,6 @@ let
             withMetrics,
             "DocumentMetrics",
             {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
-          ),
-          projected = Table.SelectColumns(
-            expandedMetrics,
-            {
-              "PMID",
-              "doi",
-              "sort_order",
-              "completed",
-              "invalid_record",
-              "_title",
-              "abstract_",
-              "authors",
-              "MeSH.descriptors",
-              "OpenAlex.MeSH.descriptors",
-              "PubMed.MeSH_Qualifiers",
-              "PubMed.ChemicalList",
-              "ChEMBL.document_chembl_id",
-              "publication_type",
-              "scholar.PublicationTypes",
-              "OpenAlex.publication_type",
-              "OpenAlex.crossref_type",
-              "OpenAlex.Genre",
-              "crossref.publication_type",
-              "review",
-              "document_contains_external_links",
-              "significant_citations_fraction",
-              "is_experimental_doc",
-              "n_activity",
-              "citations",
-              "n_assay",
-              "n_testitem"
-            },
-            MissingField.Ignore
-          ),
-          textPrepared = TransformColumnTypesSafe(
-            projected,
-            {
-              {"publication_type", type text},
-              {"ChEMBL.document_chembl_id", type text},
-              {"scholar.PublicationTypes", type text},
-              {"OpenAlex.publication_type", type text},
-              {"OpenAlex.crossref_type", type text},
-              {"OpenAlex.Genre", type text},
-              {"crossref.publication_type", type text}
-            },
-            "en-US"
           ),
           dropJournalish = {"journal-article", "journal article", "article", "journal"},
           dropSupportish =
@@ -1735,58 +1693,76 @@ let
           aliasOpenAlexXrefType = [#"journal-article" = null, article = null],
           aliasOpenAlexGenre = [article = null, #"0" = null],
           aliasCrossrefPubType = [#"journal-article" = null, article = null],
-          cleanScholar = Table.TransformColumns(
-            textPrepared,
-            {{"scholar.PublicationTypes", each CleanPipe(_, aliasScholar, {"journalarticle", "study", ""}, false), type text}}
-          ),
-          cleanOpenAlexPub = Table.TransformColumns(
-            cleanScholar,
-            {{"OpenAlex.publication_type", each CleanPipe(_, aliasOpenAlexPubType, {"0", "article", "journal", "journal-article", "journal article", ""}, false), type text}}
-          ),
-          cleanCrossref = Table.TransformColumns(
-            cleanOpenAlexPub,
-            {{"crossref.publication_type", each CleanPipe(_, aliasCrossrefPubType, {"journal-article", "article", ""}, false), type text}}
-          ),
-          cleanOpenAlexXref = Table.TransformColumns(
-            cleanCrossref,
-            {{"OpenAlex.crossref_type", each CleanPipe(_, aliasOpenAlexXrefType, {"journal-article", "article", ""}, false), type text}}
-          ),
-          cleanOpenAlexGenre = Table.TransformColumns(
-            cleanOpenAlexXref,
-            {{"OpenAlex.Genre", each CleanPipe(_, aliasOpenAlexGenre, {"0", "article", ""}, false), type text}}
-          ),
-          cleanPublicationType = Table.TransformColumns(
-            cleanOpenAlexGenre,
-            {{"publication_type", each let drop = List.Union({dropJournalish, dropSupportish, {""}}) in CleanPipe(_, aliasPublicationType, drop, false), type text}}
-          ),
-          withResponseCount = Table.AddColumn(
-            cleanPublicationType,
-            "n_responces",
-            each
-              Number.From([publication_type] <> "") +
-              Number.From([scholar.PublicationTypes] <> "") +
-              Number.From([OpenAlex.publication_type] <> "") +
-              Number.From([OpenAlex.crossref_type] <> "") +
-              2,
-            Int64.Type
-          ),
-          withReview = Table.AddColumn(
-            withResponseCount,
-            "updated_review",
-            each
-              [review] or
-              (
-                Number.From(Text.Contains([publication_type], "review")) +
-                Number.From([scholar.PublicationTypes] = "review") +
-                Number.From([OpenAlex.publication_type] = "review") +
-                Number.From([OpenAlex.crossref_type] = "review") +
-                Number.From([review]) * 2
-              ) / [n_responces] > 0.335,
-            type logical
-          ),
-          withoutLegacyReview = Table.RemoveColumns(withReview, {"review"}),
-          renamedReview = Table.RenameColumns(withoutLegacyReview, {{"updated_review", "review"}}),
-          withExperimentalFlag = Table.AddColumn(renamedReview, "is_experimental", each not [review], type logical),
+          classificationConfigs =
+            {
+              [Column = "publication_type", Alias = aliasPublicationType, Drop = List.Union({dropJournalish, dropSupportish, {""}})],
+              [Column = "scholar.PublicationTypes", Alias = aliasScholar, Drop = {"journalarticle", "study", ""}],
+              [Column = "OpenAlex.publication_type", Alias = aliasOpenAlexPubType, Drop = {"0", "article", "journal", "journal-article", "journal article", ""}],
+              [Column = "OpenAlex.crossref_type", Alias = aliasOpenAlexXrefType, Drop = {"journal-article", "article", ""}],
+              [Column = "OpenAlex.Genre", Alias = aliasOpenAlexGenre, Drop = {"0", "article", ""}],
+              [Column = "crossref.publication_type", Alias = aliasCrossrefPubType, Drop = {"journal-article", "article", ""}]
+            },
+          classificationNormalized =
+            List.Accumulate(
+              classificationConfigs,
+              expandedMetrics,
+              (state as table, cfg as record) =>
+                Table.TransformColumns(
+                  state,
+                  {{cfg[Column], each CleanPipe(_, cfg[Alias], cfg[Drop], false), type text}}
+                )
+            ),
+          reviewSignals = [BaseWeight = 2, Threshold = 0.335],
+          responseColumns = {"publication_type", "scholar.PublicationTypes", "OpenAlex.publication_type", "OpenAlex.crossref_type"},
+          withResponseCount =
+            Table.AddColumn(
+              classificationNormalized,
+              "n_responces",
+              each
+                let
+                  currentRow = _,
+                  responses =
+                    List.Transform(
+                      responseColumns,
+                      (columnName as text) =>
+                        let
+                          value = Record.FieldOrDefault(currentRow, columnName, null),
+                          textValue = ToText(value)
+                        in
+                          if textValue <> "" then 1 else 0
+                    )
+                in
+                  reviewSignals[BaseWeight] + List.Sum(responses),
+              Int64.Type
+            ),
+          withReview =
+            Table.AddColumn(
+              withResponseCount,
+              "updated_review",
+              each
+                let
+                  pubType = ToText(Record.FieldOrDefault(_, "publication_type", "")),
+                  scholarType = ToText(Record.FieldOrDefault(_, "scholar.PublicationTypes", "")),
+                  openAlexType = ToText(Record.FieldOrDefault(_, "OpenAlex.publication_type", "")),
+                  openAlexXref = ToText(Record.FieldOrDefault(_, "OpenAlex.crossref_type", "")),
+                  baseReview = Record.FieldOrDefault(_, "review", false),
+                  voteScore =
+                    Number.From(Text.Contains(pubType, "review")) +
+                    Number.From(scholarType = "review") +
+                    Number.From(openAlexType = "review") +
+                    Number.From(openAlexXref = "review") +
+                    Number.From(baseReview) * reviewSignals[BaseWeight],
+                  normalizedScore = voteScore / Record.Field(_, "n_responces")
+                in
+                  baseReview or normalizedScore > reviewSignals[Threshold],
+              type logical
+            ),
+          reviewFinal =
+            let
+              withoutLegacy = RemoveColumnsSafe(withReview, {"review"})
+            in
+              RenameColumnsSafe(withoutLegacy, {{"updated_review", "review"}}),
+          withExperimentalFlag = Table.AddColumn(reviewFinal, "is_experimental", each not [review], type logical),
           documentSchema = [
             Rename = {
               {"_title", "title"},
@@ -1799,9 +1775,34 @@ let
             },
             Type = {
               {"PMID", Int64.Type},
-              {"review", type logical},
+              {"doi", type text},
+              {"sort_order", type text},
+              {"completed", type text},
+              {"invalid_record", type logical},
+              {"title", type text},
+              {"abstract", type text},
+              {"authors", type text},
+              {"PubMed.MeSH", type text},
+              {"OpenAlex.MeSH", type text},
+              {"MeSH.qualifiers", type text},
+              {"chemical_list", type text},
+              {"ChEMBL.document_chembl_id", type text},
+              {"PubMed.publication_type", type text},
+              {"scholar.PublicationTypes", type text},
+              {"OpenAlex.publication_type", type text},
+              {"OpenAlex.crossref_type", type text},
+              {"OpenAlex.Genre", type text},
+              {"crossref.publication_type", type text},
               {"significant_citations_fraction", type logical},
-              {"ChEMBL.document_chembl_id", type text}
+              {"document_contains_external_links", type logical},
+              {"is_experimental_doc", type logical},
+              {"n_activity", Int64.Type},
+              {"citations", Int64.Type},
+              {"n_assay", Int64.Type},
+              {"n_testitem", Int64.Type},
+              {"n_responces", Int64.Type},
+              {"review", type logical},
+              {"is_experimental", type logical}
             },
             Order = {
               "PMID",
@@ -1838,13 +1839,16 @@ let
           ApplyDocumentSchema = (tbl as table) as table =>
             let
               renamed = RenameColumnsSafe(tbl, documentSchema[Rename]),
-              typed = TransformColumnTypesSafe(renamed, documentSchema[Type]),
-              ordered = Table.ReorderColumns(typed, documentSchema[Order], MissingField.Ignore)
+              typed = Helpers[TransformColumnTypesSafe](renamed, documentSchema[Type]),
+              selected = SelectColumnsSafe(typed, documentSchema[Order]),
+              ordered = Table.ReorderColumns(selected, documentSchema[Order], MissingField.Ignore)
             in
               ordered,
           finalTable = ApplyDocumentSchema(withExperimentalFlag)
         in
           finalTable
+
+
     in
       [
         BuildValidationFrame = BuildValidationFrame,
