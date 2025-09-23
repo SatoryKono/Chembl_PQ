@@ -9,6 +9,8 @@
 // - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
 // - Removed residual protein_classifications column before joining IUPHAR data to avoid duplicate-field expansion errors.
 // - Stripped protein_classifications from the IUPHAR known target feed so downstream expansions cannot reintroduce duplicate fields.
+// - Filtered IUPHAR merge expansion to ignore protein_classifications and avoid duplicate-column collisions upstream.
+// - Sanitized Target_out loading to drop protein_classifications before downstream joins expand nested IUPHAR attributes.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -117,8 +119,15 @@ let
       AuthorityPrefix = "10.",
       MinLength = 5,
       MaxLength = 300
+    ],
+    ColumnCatalog = [
+      ProteinClassification = "protein_classifications"
     ]
   ],
+
+  ColumnCatalog = Record.Field(Parameters, "ColumnCatalog"),
+  ProteinClassificationColumnName = Record.Field(ColumnCatalog, "ProteinClassification"),
+  TargetColumnDrops = List.RemoveNulls({ProteinClassificationColumnName}),
 
   // ===== Providers =====
   BuildAbsolutePath = (pathRel as text) as text => Parameters[BasePath] & pathRel,
@@ -389,14 +398,20 @@ let
       ],
   Data =
     let
-      load = Loaders[LoadFromTableConfig]
+      load = Loaders[LoadFromTableConfig],
+      targetOutRaw = load("Target_out"),
+      targetOutSanitized =
+        if List.IsEmpty(TargetColumnDrops) then
+          targetOutRaw
+        else
+          Table.RemoveColumns(targetOutRaw, TargetColumnDrops, MissingField.Ignore)
     in
       [
         Document_in = load("Document_in"),
         Activity_in = load("Activity_in"),
         Testitem_in = load("Testitem_in"),
 
-        Target_out = load("Target_out"),
+        Target_out = targetOutSanitized,
         Document_out = load("Document_out"),
         Assay_out = load("Assay_out"),
         Testitem_out = load("Testitem_out")
@@ -2683,6 +2698,7 @@ let
       Drop = DropColumns,
       JoinExpand = JoinAndExpand,
       SplitPipe = SplitPipeList,
+      ProteinClassificationColumn = ProteinClassificationColumnName,
       PredCols = {
         "protein_class_pred_L1",
         "protein_class_pred_L2",
@@ -2690,8 +2706,11 @@ let
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
         "protein_class_pred_confidence",
-        "protein_classifications"
+
+        ProteinClassificationColumn
+
       },
+      PredColsForExpansion = List.RemoveItems(PredCols, {ProteinClassificationColumn}),
       IupharIdCols = {
         "iuphar_target_id",
         "iuphar_family_id",
@@ -3537,6 +3556,7 @@ let
               Table.SelectRows(cleaned4, each [Column1] <> null),
           classification = Table.Buffer(normalizeTable19()),
           dropPrediction = PredCols,
+          expandPrediction = PredColsForExpansion,
           dropIupharId = IupharIdCols,
           dropForKnown = List.Combine({dropPrediction, {"ec_number", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "known_id"}}),
           mergeIuphar = (src as table) as table =>
@@ -3546,8 +3566,10 @@ let
               expanded = ExpandTableColumnSafe(
                 joined,
                 "IUPHAR",
-                List.Combine({dropPrediction, dropIupharId}),
-                List.Combine({dropPrediction, dropIupharId})
+
+                List.Combine({expandPrediction, dropIupharId}),
+                List.Combine({expandPrediction, dropIupharId})
+
               )
             in
               expanded,
