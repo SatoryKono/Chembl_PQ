@@ -1934,7 +1934,7 @@ let
               "n_responces",
               "review",
               "is_experimental"
-            ]
+            }
           ],
           ApplyDocumentSchema = (tbl as table) as table =>
             let
@@ -3011,8 +3011,8 @@ let
               normalizedAlt = Table.TransformColumns(
                 ordered,
                 {
-                  {"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "[\"", ""), "\"]", "")), type text},
-                  {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "[\"", ""), "\"]", "") in if s = "[]" or s = "" then null else s, type nullable text}
+                  {"gene_symbol_list", each Text.Lower(Text.Replace(Text.Replace(ToText(_), "[", ""), "]", "")), type text},
+                  {"protein_name_alt", each let s = Text.Replace(Text.Replace(ToText(_), "[", ""), "]", "") in if s = "[]" or s = "" then null else s, type nullable text}
                 }
               ),
               components1 = try
@@ -3521,7 +3521,7 @@ let
       PTM = TargetModules[PTM],
       IUPHAR = () as table => TargetModules[IUPHAR][Build](),
       known = () as table => TargetModules[IUPHAR][BuildKnown]()
-    ],
+    ] 
   ],
   // ===== get_target =====
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
