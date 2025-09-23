@@ -3,6 +3,7 @@
 // - Implemented SharePoint parameter validation with friendly error messaging.
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
+// - Stabilized header promotion with sanitization and deterministic fallback naming.
 
 let
   // ===== Parameters =====
@@ -452,25 +453,60 @@ let
           result,
       promoteHeadersSafe = (tbl as table, optional context as nullable record) as table =>
         let
-          attempt = try Table.PromoteHeaders(tbl, [PromoteAllScalars = true]),
-          promoted =
-            if attempt[HasError] then
-              let
-                details =
-                  if context = null then
-                    [Reason = attempt[Error]]
-                  else
-                    Record.Combine({context, [Reason = attempt[Error]]})
-              in
-                error Error.Record(
-                  "Helpers.PromoteHeadersSafe",
-                  "Не удалось преобразовать первую строку в заголовки.",
-                  details
+          raiseError = (reason as any) =>
+            let
+              details =
+                if context = null then
+                  [Reason = reason]
+                else
+                  Record.Combine({context, [Reason = reason]})
+            in
+              error Error.Record(
+                "Helpers.PromoteHeadersSafe",
+                "Не удалось преобразовать первую строку в заголовки.",
+                details
+              ),
+          rowCount = Table.RowCount(tbl),
+          validatedTable = if rowCount = 0 then raiseError("TableIsEmpty") else tbl,
+          columnNames = Table.ColumnNames(validatedTable),
+          firstRow = Table.First(validatedTable),
+          buildCandidate = (colName as text) as text =>
+            let
+              rawValue = Record.Field(firstRow, colName),
+              normalizedValue = normalizeWhitespace(rawValue, false),
+              fallbackName = colName
+            in
+              if normalizedValue = null then fallbackName else normalizedValue,
+          headerCandidates = List.Transform(columnNames, each buildCandidate(_)),
+          ensureUniqueNames = (names as list) as list =>
+            let
+              folder =
+                List.Accumulate(
+                  names,
+                  [Result = {}, Counters = []],
+                  (state as record, current as text) as record =>
+                    let
+                      counters = state[Counters],
+                      currentCount = if Record.HasFields(counters, {current}) then Record.Field(counters, current) else 0,
+                      nextIndex = currentCount + 1,
+                      nextName = if currentCount = 0 then current else current & Text.From(nextIndex),
+                      updatedCounters = Record.Combine({counters, Record.FromList({nextIndex}, {current})}),
+                      updatedResult = state[Result] & {nextName}
+                    in
+                      [Result = updatedResult, Counters = updatedCounters]
                 )
+            in
+              folder[Result],
+          sanitizedHeaders = ensureUniqueNames(headerCandidates),
+          renamePairs = List.Zip({columnNames, sanitizedHeaders}),
+          body = Table.Skip(validatedTable, 1),
+          renamed =
+            if List.Count(renamePairs) = 0 then
+              body
             else
-              attempt[Value]
+              Table.RenameColumns(body, renamePairs, MissingField.Ignore)
         in
-          promoted,
+          renamed,
       transformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
         let
           columnNames = Table.ColumnNames(tbl),
