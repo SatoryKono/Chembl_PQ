@@ -2706,7 +2706,9 @@ let
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
         "protein_class_pred_confidence",
+
         ProteinClassificationColumn
+
       },
       PredColsForExpansion = List.RemoveItems(PredCols, {ProteinClassificationColumn}),
       IupharIdCols = {
@@ -3564,8 +3566,10 @@ let
               expanded = ExpandTableColumnSafe(
                 joined,
                 "IUPHAR",
+
                 List.Combine({expandPrediction, dropIupharId}),
                 List.Combine({expandPrediction, dropIupharId})
+
               )
             in
               expanded,
