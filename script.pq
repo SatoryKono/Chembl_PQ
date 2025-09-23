@@ -5,7 +5,7 @@
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
 // - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
-// - Protected safe expansion helper from conflicting column names before nested joins are expanded.
+
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
