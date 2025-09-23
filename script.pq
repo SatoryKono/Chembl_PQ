@@ -7,6 +7,7 @@
 // - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
 // - Protected safe expansion helper from conflicting column names before nested joins are expanded.
 // - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
+ 
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
