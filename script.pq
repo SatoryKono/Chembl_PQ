@@ -9,6 +9,7 @@
 // - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
 // - Removed residual protein_classifications column before joining IUPHAR data to avoid duplicate-field expansion errors.
 
+
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
 
