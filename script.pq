@@ -3598,7 +3598,7 @@ let
         iupharAttributes,
         iupharAttributes
       ),
-      ordered = SelectInOrder(withIuphar, outputColumns)
+      ordered = SelectColumnsInOrder(withIuphar, outputColumns)
     in
       ordered,
   data_validation = Record.AddField(data_validation_base, "get_target", get_target),
