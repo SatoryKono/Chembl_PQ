@@ -6,6 +6,7 @@
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
+// - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
 
 
 let
@@ -3611,19 +3612,35 @@ let
         PTM = PtmModule,
         IUPHAR = IupharModule
       ],
+  TargetHandlersType =
+    type record [
+      isoform = type function (table) as table,
+      crossref = type function (table) as table,
+      activity = type function (table) as table,
+      metadata = type function (table) as table,
+      name = type function (table) as table,
+      organism = type function (table) as table,
+      main = type function (table) as table,
+      PTM = type record,
+      IUPHAR = type function () as table,
+      known = type function () as table
+    ],
   TargetHandlers =
-    [
-      isoform = TargetModules[Isoform][Build],
-      crossref = TargetModules[Crossref][Build],
-      activity = TargetModules[Activity][Build],
-      metadata = TargetModules[Metadata][Build],
-      name = TargetModules[Name][Build],
-      organism = TargetModules[Organism][Build],
-      main = TargetModules[Main][Build],
-      PTM = TargetModules[PTM],
-      IUPHAR = () as table => TargetModules[IUPHAR][Build](),
-      known = () as table => TargetModules[IUPHAR][BuildKnown]()
-    ]
+    Value.ReplaceType(
+      [
+        isoform = TargetModules[Isoform][Build],
+        crossref = TargetModules[Crossref][Build],
+        activity = TargetModules[Activity][Build],
+        metadata = TargetModules[Metadata][Build],
+        name = TargetModules[Name][Build],
+        organism = TargetModules[Organism][Build],
+        main = TargetModules[Main][Build],
+        PTM = TargetModules[PTM],
+        IUPHAR = () as table => TargetModules[IUPHAR][Build](),
+        known = () as table => TargetModules[IUPHAR][BuildKnown]()
+      ],
+      TargetHandlersType
+    )
   ],
   // ===== get_target =====
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
@@ -3740,7 +3757,8 @@ let
       get_document = data_validation[get_document],
       get_testitem = data_validation[get_testitem],
       get_assay = data_validation[get_assay],
-      get_target = data_validation[get_target]
+      get_target = data_validation[get_target],
+      get_target_handlers = () as record => TargetHandlers
     ],
   Result =
     [
@@ -3750,6 +3768,8 @@ let
       _assay = Exports[get_assay],
       _target = Exports[get_target],
       _validation = Exports[get_validation],
+      _target_handlers = Exports[get_target_handlers],
+      TargetHandlers = Exports[get_target_handlers](),
       ParamsSummary = ParamsSummary
     ]
 in
