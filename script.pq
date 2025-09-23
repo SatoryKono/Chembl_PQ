@@ -4,6 +4,7 @@
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
+// - Resolved target module naming collision causing missing 'main' column errors in exports.
 
 let
   // ===== Parameters =====
@@ -3545,7 +3546,7 @@ let
         PTM = PtmModule,
         IUPHAR = IupharModule
       ],
-  target =
+  TargetHandlers =
     [
       isoform = TargetModules[Isoform][Build],
       crossref = TargetModules[Crossref][Build],
@@ -3557,7 +3558,7 @@ let
       PTM = TargetModules[PTM],
       IUPHAR = () as table => TargetModules[IUPHAR][Build](),
       known = () as table => TargetModules[IUPHAR][BuildKnown]()
-    ] 
+    ]
   ],
   // ===== get_target =====
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
@@ -3629,9 +3630,9 @@ let
         "iuphar_full_id_path",
         "iuphar_full_name_path"
       },
-      baseMain = target[main](Data[Target_out]),
+      baseMain = TargetHandlers[main](Data[Target_out]),
       sanitizedMain = DropColumns(baseMain, classificationColumns),
-      organismSource = target[organism](Data[Target_out]),
+      organismSource = TargetHandlers[organism](Data[Target_out]),
       organismTable = Table.Buffer(
         SelectColumnsSafe(
           organismSource,
@@ -3649,7 +3650,7 @@ let
       ),
       iupharTable = Table.Buffer(
         SelectColumnsSafe(
-          target[IUPHAR](),
+          TargetHandlers[IUPHAR](),
           List.Combine({{"target_chembl_id"}, iupharAttributes})
         )
       ),
