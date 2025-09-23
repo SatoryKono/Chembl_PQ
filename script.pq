@@ -451,6 +451,17 @@ let
               Table.AddColumn(tbl, columnName, each defaultValue)
         in
           result,
+      zipLists = (firstList as list, secondList as list) as list =>
+        let
+          firstCount = List.Count(firstList),
+          secondCount = List.Count(secondList),
+          commonLength = List.Min({firstCount, secondCount}),
+          truncatedFirst = List.FirstN(firstList, commonLength),
+          truncatedSecond = List.FirstN(secondList, commonLength),
+          positions = List.Positions(truncatedFirst),
+          paired = List.Transform(positions, each {truncatedFirst{_}, truncatedSecond{_}})
+        in
+          paired,
       promoteHeadersSafe = (tbl as table, optional context as nullable record) as table =>
         let
           raiseError = (reason as any) =>
@@ -498,7 +509,7 @@ let
             in
               folder[Result],
           sanitizedHeaders = ensureUniqueNames(headerCandidates),
-          renamePairs = List.Zip({columnNames, sanitizedHeaders}),
+          renamePairs = zipLists(columnNames, sanitizedHeaders),
           body = Table.Skip(validatedTable, 1),
           renamed =
             if List.Count(renamePairs) = 0 then
@@ -671,7 +682,8 @@ let
         JoinAndExpand = joinAndExpand,
         SelectColumnsInOrder = selectColumnsInOrder,
         SplitPipeList = splitPipeList,
-        ReplaceTextInColumn = replaceTextInColumn
+        ReplaceTextInColumn = replaceTextInColumn,
+        ZipLists = zipLists
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -693,6 +705,7 @@ let
   SelectColumnsInOrder = Helpers[SelectColumnsInOrder],
   SplitPipeList = Helpers[SplitPipeList],
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
+  ZipLists = Helpers[ZipLists],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, columns, MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
