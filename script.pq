@@ -2,6 +2,7 @@
 // - Added unified provider routing for file, HTTP, and SharePoint sources.
 // - Implemented SharePoint parameter validation with friendly error messaging.
 // - Introduced loader configuration with early column selection and culture-aware typing.
+// - Restored cellularity enrichment logic and aligned organism lineage mapping.
 
 let
   // ===== Parameters =====
@@ -2397,6 +2398,86 @@ let
         res,
     AddCellularitySmart = (src as table, taxIdColumn as text, superkingdomColumn as text, phylumColumn as text) as table =>
       let
+        ensureColumn = (tbl as table, columnName as text, columnType as type) as table =>
+          if List.Contains(Table.ColumnNames(tbl), columnName) then
+            tbl
+          else
+            Table.AddColumn(tbl, columnName, each null, columnType),
+        preparedBase =
+          List.Accumulate(
+            {
+              [Name = taxIdColumn, Type = Int64.Type],
+              [Name = superkingdomColumn, Type = type nullable text],
+              [Name = phylumColumn, Type = type nullable text]
+            },
+            src,
+            (state as table, cfg as record) => ensureColumn(state, cfg[Name], cfg[Type])
+          ),
+        withoutCellularity =
+          if List.Contains(Table.ColumnNames(preparedBase), "cellularity") then
+            Table.RemoveColumns(preparedBase, {"cellularity"}, MissingField.Ignore)
+          else
+            preparedBase,
+        columnNames = Table.ColumnNames(withoutCellularity),
+        candidateRanks =
+          List.Distinct(
+            List.RemoveNulls(
+              {
+                if List.Contains(columnNames, phylumColumn) then phylumColumn else null,
+                if phylumColumn <> "lineage_phylum" and List.Contains(columnNames, "lineage_phylum") then "lineage_phylum" else null,
+                if List.Contains(columnNames, "lineage_class") then "lineage_class" else null
+              }
+            )
+          ),
+        toTextOrNull = (value as any) as nullable text =>
+          if value = null then
+            null
+          else
+            let
+              primary = try Text.From(value, "en-US")
+            in
+              if primary[HasError] then
+                let
+                  fallback = try Text.From(value)
+                in
+                  if fallback[HasError] then null else fallback[Value]
+              else
+                primary[Value],
+        classifyRow = (row as record) as text =>
+          let
+            superkingdomValue = toTextOrNull(Record.FieldOrDefault(row, superkingdomColumn, null)),
+            results =
+              if superkingdomValue = null then
+                {}
+              else
+                List.Transform(
+                  candidateRanks,
+                  (rankColumn as text) =>
+                    ClassifyByLineage(
+                      superkingdomValue,
+                      toTextOrNull(Record.FieldOrDefault(row, rankColumn, null))
+                    )
+                ),
+            nonAmbiguous = List.Select(results, each _ <> "ambiguous"),
+            resolved =
+              if superkingdomValue = null then
+                "ambiguous"
+              else if not List.IsEmpty(nonAmbiguous) then
+                nonAmbiguous{0}
+              else if not List.IsEmpty(results) then
+                results{0}
+              else
+                ClassifyByLineage(superkingdomValue, null)
+          in
+            resolved,
+        withCellularity = Table.AddColumn(
+          withoutCellularity,
+          "cellularity",
+          each classifyRow(_),
+          type text
+        )
+      in
+        withCellularity,
 // =====================================================
 // Target modules (модуль функций)
 // =====================================================
@@ -3006,7 +3087,7 @@ let
                   {"lineage_class", Text.Lower, type text}
                 }
               ),
-              withCellularity = Cellularity_[AddCellularitySmart](lowered, "taxon_id", "lineage_superkingdom", "lineage_class"),
+              withCellularity = Cellularity_[AddCellularitySmart](lowered, "taxon_id", "lineage_superkingdom", "lineage_phylum"),
               withEc = Table.AddColumn(
                 withCellularity,
                 "ec_major_list",
