@@ -3595,8 +3595,7 @@ let
         known = () as table => TargetModules[IUPHAR][BuildKnown]()
       ],
       TargetHandlersType
-    )
-  ],
+    ),
   // ===== get_target =====
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
   get_target = () =>
