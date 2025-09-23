@@ -3611,14 +3611,16 @@ let
       get_testitem = data_validation[get_testitem],
       get_assay = data_validation[get_assay],
       get_target = data_validation[get_target]
+    ],
+  Result =
+    [
+      Exports = Exports,
+      _document = Exports[get_document],
+      _testitem = Exports[get_testitem],
+      _assay = Exports[get_assay],
+      _target = Exports[get_target],
+      _validation = Exports[get_validation],
+      ParamsSummary = ParamsSummary
     ]
 in
-  [
-    Exports = Exports,
-    _document = Exports[get_document],
-    _testitem = Exports[get_testitem],
-    _assay = Exports[get_assay],
-    _target = Exports[get_target],
-    _validation = Exports[get_validation],
-    ParamsSummary = ParamsSummary
-  ]
+  Result
