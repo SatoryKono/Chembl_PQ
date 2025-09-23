@@ -7,7 +7,8 @@
 // - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
 // - Protected safe expansion helper from conflicting column names before nested joins are expanded.
 // - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
- 
+// - Removed residual protein_classifications column before joining IUPHAR data to avoid duplicate-field expansion errors.
+
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -2688,7 +2689,8 @@ let
         "protein_class_pred_L3",
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
-        "protein_class_pred_confidence"
+        "protein_class_pred_confidence",
+        "protein_classifications"
       },
       IupharIdCols = {
         "iuphar_target_id",
@@ -3733,6 +3735,7 @@ let
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
         "protein_class_pred_confidence",
+        "protein_classifications",
         "iuphar_target_id",
         "iuphar_family_id",
         "iuphar_type",
