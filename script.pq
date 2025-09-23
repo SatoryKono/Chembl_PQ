@@ -4,6 +4,7 @@
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
+// - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -306,9 +307,21 @@ let
       applySelectColumns = (tbl as table, options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
-          columns = if Record.HasFields(opts, {"SelectColumns"}) then Record.Field(opts, "SelectColumns") else null
+          columnsRaw =
+            if Record.HasFields(opts, {"SelectColumns"}) then
+              Record.Field(opts, "SelectColumns")
+            else
+              null,
+          columnsSanitized =
+            if columnsRaw = null then
+              {}
+            else
+              NormalizeColumnList(columnsRaw)
         in
-          if columns = null then tbl else Table.SelectColumns(tbl, columns, MissingField.Ignore),
+          if columnsRaw = null then
+            tbl
+          else
+            Table.SelectColumns(tbl, columnsSanitized, MissingField.Ignore),
       loadCsv = (pathRel as text, optional options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
@@ -559,15 +572,23 @@ let
             tbl
           else
             Table.RemoveColumns(tbl, cols, MissingField.Ignore),
+      normalizeColumnList = (columns as nullable list) as list =>
+        let
+          base = if columns = null then {} else columns,
+          nonNull = List.Select(base, each _ <> null),
+          distinct = List.Distinct(nonNull)
+        in
+          distinct,
       selectColumnsInOrder = (tbl as table, optional columnOrder as nullable list) as table =>
         let
-          order = if columnOrder = null then {} else columnOrder,
-          existing = List.Intersect({order, Table.ColumnNames(tbl)})
+          order = normalizeColumnList(columnOrder),
+          existing = List.Intersect({order, Table.ColumnNames(tbl)}),
+          sanitized = normalizeColumnList(existing)
         in
-          if List.Count(existing) = 0 then
+          if List.Count(sanitized) = 0 then
             tbl
           else
-            Table.SelectColumns(tbl, existing, MissingField.Ignore),
+            Table.SelectColumns(tbl, sanitized, MissingField.Ignore),
       renameColumnsSafe = (tbl as table, renames as list) as table =>
         if renames = null or List.Count(renames) = 0 then
           tbl
@@ -734,6 +755,7 @@ let
         NormalizeDoi = normalizeDoi,
         RemoveColumnsSafe = removeColumnsSafe,
         DropColumns = dropColumns,
+        NormalizeColumnList = normalizeColumnList,
         RenameColumnsSafe = renameColumnsSafe,
         ReplaceNullWithValue = replaceNullWithValue,
         LowercaseColumns = lowercaseColumns,
@@ -756,6 +778,7 @@ let
   NormalizeDoi = Helpers[NormalizeDoi],
   RemoveColumnsSafe = Helpers[RemoveColumnsSafe],
   DropColumns = Helpers[DropColumns],
+  NormalizeColumnList = Helpers[NormalizeColumnList],
   RenameColumnsSafe = Helpers[RenameColumnsSafe],
   ReplaceNullWithValue = Helpers[ReplaceNullWithValue],
   LowercaseColumns = Helpers[LowercaseColumns],
@@ -767,7 +790,7 @@ let
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   ZipLists = Helpers[ZipLists],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
-    Table.SelectColumns(tbl, columns, MissingField.Ignore),
+    Table.SelectColumns(tbl, NormalizeColumnList(columns), MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
     let
       typePairs = List.Transform(aggColumns, each {_, Int64.Type}),
