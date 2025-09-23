@@ -3613,17 +3613,17 @@ let
         IUPHAR = IupharModule
       ],
   TargetHandlersType =
-    type record [
-      isoform = type function (table) as table,
-      crossref = type function (table) as table,
-      activity = type function (table) as table,
-      metadata = type function (table) as table,
-      name = type function (table) as table,
-      organism = type function (table) as table,
-      main = type function (table) as table,
-      PTM = type record,
-      IUPHAR = type function () as table,
-      known = type function () as table
+    type [
+      isoform = function (source as table) as table,
+      crossref = function (source as table) as table,
+      activity = function (source as table) as table,
+      metadata = function (source as table) as table,
+      name = function (source as table) as table,
+      organism = function (source as table) as table,
+      main = function (source as table) as table,
+      PTM = record,
+      IUPHAR = function () as table,
+      known = function () as table
     ],
   TargetHandlers =
     Value.ReplaceType(
