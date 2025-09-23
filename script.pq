@@ -5,7 +5,9 @@
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
 // - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
-
+// - Protected safe expansion helper from conflicting column names before nested joins are expanded.
+// - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
+ 
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -3538,9 +3540,15 @@ let
           mergeIuphar = (src as table) as table =>
             let
               trimmed = Drop(src, List.Combine({dropPrediction, dropIupharId})),
-              joined = Table.NestedJoin(trimmed, {"target_chembl_id"}, buildIntermediate(), {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter)
+              joined = Table.NestedJoin(trimmed, {"target_chembl_id"}, buildIntermediate(), {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter),
+              expanded = ExpandTableColumnSafe(
+                joined,
+                "IUPHAR",
+                List.Combine({dropPrediction, dropIupharId}),
+                List.Combine({dropPrediction, dropIupharId})
+              )
             in
-              Table.ExpandTableColumn(joined, "IUPHAR", List.Combine({dropPrediction, dropIupharId}), List.Combine({dropPrediction, dropIupharId})),
+              expanded,
           buildIntermediate = () as table =>
             IUPHAR_int(),
           buildKnown = () as table =>
@@ -3556,7 +3564,7 @@ let
                 "org",
                 JoinKind.LeftOuter
               ),
-              expandedOrg = Table.ExpandTableColumn(
+              expandedOrg = ExpandTableColumnSafe(
                 joinedOrg,
                 "org",
                 {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"},
@@ -3570,7 +3578,7 @@ let
                 "act",
                 JoinKind.LeftOuter
               ),
-              expandedAct = Table.ExpandTableColumn(joinedAct, "act", {"reaction_ec_numbers"}, {"ec_number"}),
+              expandedAct = ExpandTableColumnSafe(joinedAct, "act", {"reaction_ec_numbers"}, {"ec_number"}),
               direct = mergeIuphar(expandedAct),
               baseKnown = Table.SelectRows(direct, each ToText([iuphar_family_id]) <> "N/A" or ToText([cellularity]) = "unicellular"),
               trimmedBase = Drop(baseKnown, {"gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_number"}),
@@ -3579,7 +3587,12 @@ let
                   candidates = Table.SelectRows(direct, each ToText([iuphar_full_id_path]) = ""),
                   trimmedCandidates = Drop(candidates, dropIupharId),
                   joinClass1 = Table.NestedJoin(trimmedCandidates, {"protein_class_pred_L1"}, classification, {"iuphar_class"}, "cls", JoinKind.LeftOuter),
-                  expandClass1 = Table.ExpandTableColumn(joinClass1, "cls", List.Combine({dropIupharId, {"Column1", "Column2"}}), List.Combine({dropIupharId, {"Column1", "Column2"}})),
+                  expandClass1 = ExpandTableColumnSafe(
+                    joinClass1,
+                    "cls",
+                    List.Combine({dropIupharId, {"Column1", "Column2"}}),
+                    List.Combine({dropIupharId, {"Column1", "Column2"}})
+                  ),
                   filteredClass1 = Table.SelectRows(expandClass1, each [Column2] <> null),
                   cleanedClass1 = Drop(filteredClass1, {"Column1", "Column2"})
                 in
@@ -3589,7 +3602,12 @@ let
                   candidates = Table.SelectRows(direct, each ToText([iuphar_full_id_path]) = ""),
                   trimmedCandidates = Drop(candidates, dropIupharId),
                   joinClass2 = Table.NestedJoin(trimmedCandidates, {"protein_class_pred_L2"}, classification, {"Column2"}, "cls", JoinKind.LeftOuter),
-                  expandClass2 = Table.ExpandTableColumn(joinClass2, "cls", List.Combine({dropIupharId, {"Column1", "Column2"}}), List.Combine({dropIupharId, {"Column1", "Column2"}})),
+                  expandClass2 = ExpandTableColumnSafe(
+                    joinClass2,
+                    "cls",
+                    List.Combine({dropIupharId, {"Column1", "Column2"}}),
+                    List.Combine({dropIupharId, {"Column1", "Column2"}})
+                  ),
                   filteredClass2 = Table.SelectRows(expandClass2, each [iuphar_chain] <> null),
                   dedupClass2 = Table.Distinct(filteredClass2, {"target_chembl_id", "uniprot_id_primary"})
                 in
@@ -3602,7 +3620,7 @@ let
                   typed = TransformColumnTypesSafe(filteredMajor, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
                   joined = Table.NestedJoin(typed, {"ec_major"}, classification, {"ec"}, "cls", JoinKind.LeftOuter),
                   trimmed = Drop(joined, dropIupharId),
-                  expanded = Table.ExpandTableColumn(trimmed, "cls", dropIupharId, dropIupharId),
+                  expanded = ExpandTableColumnSafe(trimmed, "cls", dropIupharId, dropIupharId),
                   appended = Table.Combine({expanded, fallback, fallback2}),
                   deduplicated = Table.Distinct(appended, {"target_chembl_id"}),
                   cleaned = Drop(
@@ -3643,13 +3661,13 @@ let
                 "Known",
                 JoinKind.LeftOuter
               ),
-              expanded = Table.ExpandTableColumn(joined, "Known", {"target_chembl_id"}, {"known_id"}),
+              expanded = ExpandTableColumnSafe(joined, "Known", {"target_chembl_id"}, {"known_id"}),
               withoutKnown = Table.SelectRows(expanded, each [known_id] = null),
               distinctTargets = Table.Distinct(withoutKnown, {"target_chembl_id"}),
               withFallbackKey = Table.AddColumn(distinctTargets, "ec_key", each 100, Int64.Type),
               joinedClass = Table.NestedJoin(withFallbackKey, {"ec_key"}, classification, {"ec"}, "cls", JoinKind.LeftOuter),
               trimmed = Drop(joinedClass, dropIupharId),
-              expandedClass = Table.ExpandTableColumn(trimmed, "cls", dropIupharId, dropIupharId),
+              expandedClass = ExpandTableColumnSafe(trimmed, "cls", dropIupharId, dropIupharId),
               withoutTech = Drop(expandedClass, {"ec_number", "ec_key"}),
               combined = Table.Combine({distinctKnown, withoutTech}),
               deduplicated = Table.Distinct(combined, {"target_chembl_id"})
