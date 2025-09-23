@@ -500,6 +500,12 @@ let
           headerCandidates = List.Transform(columnNames, each buildCandidate(_)),
           ensureUniqueNames = (names as list) as list =>
             let
+              updateCounters = (counters as record, key as text, value as number) as record =>
+                let
+                  sanitized = if Record.HasFields(counters, key) then Record.RemoveFields(counters, {key}) else counters,
+                  updated = Record.AddField(sanitized, key, value)
+                in
+                  updated,
               folder =
                 List.Accumulate(
                   names,
@@ -507,10 +513,10 @@ let
                   (state as record, current as text) as record =>
                     let
                       counters = state[Counters],
-                      currentCount = if Record.HasFields(counters, {current}) then Record.Field(counters, current) else 0,
+                      currentCount = if Record.HasFields(counters, current) then Record.Field(counters, current) else 0,
                       nextIndex = currentCount + 1,
                       nextName = if currentCount = 0 then current else current & Text.From(nextIndex),
-                      updatedCounters = Record.Combine({counters, Record.FromList({nextIndex}, {current})}),
+                      updatedCounters = updateCounters(counters, current, nextIndex),
                       updatedResult = state[Result] & {nextName}
                     in
                       [Result = updatedResult, Counters = updatedCounters]
