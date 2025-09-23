@@ -4,6 +4,10 @@
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
+// - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
+// - Protected safe expansion helper from conflicting column names before nested joins are expanded.
+// - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
+// - Removed residual protein_classifications column before joining IUPHAR data to avoid duplicate-field expansion errors.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -306,9 +310,21 @@ let
       applySelectColumns = (tbl as table, options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
-          columns = if Record.HasFields(opts, {"SelectColumns"}) then Record.Field(opts, "SelectColumns") else null
+          columnsRaw =
+            if Record.HasFields(opts, {"SelectColumns"}) then
+              Record.Field(opts, "SelectColumns")
+            else
+              null,
+          columnsSanitized =
+            if columnsRaw = null then
+              {}
+            else
+              NormalizeColumnList(columnsRaw)
         in
-          if columns = null then tbl else Table.SelectColumns(tbl, columns, MissingField.Ignore),
+          if columnsRaw = null then
+            tbl
+          else
+            Table.SelectColumns(tbl, columnsSanitized, MissingField.Ignore),
       loadCsv = (pathRel as text, optional options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
@@ -559,15 +575,23 @@ let
             tbl
           else
             Table.RemoveColumns(tbl, cols, MissingField.Ignore),
+      normalizeColumnList = (columns as nullable list) as list =>
+        let
+          base = if columns = null then {} else columns,
+          nonNull = List.Select(base, each _ <> null),
+          distinct = List.Distinct(nonNull)
+        in
+          distinct,
       selectColumnsInOrder = (tbl as table, optional columnOrder as nullable list) as table =>
         let
-          order = if columnOrder = null then {} else columnOrder,
-          existing = List.Intersect({order, Table.ColumnNames(tbl)})
+          order = normalizeColumnList(columnOrder),
+          existing = List.Intersect({order, Table.ColumnNames(tbl)}),
+          sanitized = normalizeColumnList(existing)
         in
-          if List.Count(existing) = 0 then
+          if List.Count(sanitized) = 0 then
             tbl
           else
-            Table.SelectColumns(tbl, existing, MissingField.Ignore),
+            Table.SelectColumns(tbl, sanitized, MissingField.Ignore),
       renameColumnsSafe = (tbl as table, renames as list) as table =>
         if renames = null or List.Count(renames) = 0 then
           tbl
@@ -595,35 +619,65 @@ let
           optional newColumnNames as nullable list
         ) as table =>
         let
-          columnExists = List.Contains(Table.ColumnNames(tbl), columnName),
-          targetNames = if newColumnNames = null then columnsToExpand else newColumnNames,
-          pairs = zipLists(columnsToExpand, targetNames),
-          expandAttempt =
-            if columnExists then
-              try Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames)
+          columnExistsOriginal = List.Contains(Table.ColumnNames(tbl), columnName),
+          sourcesRaw = if columnsToExpand = null then {} else columnsToExpand,
+          targetsRaw = if newColumnNames = null then sourcesRaw else newColumnNames,
+          rawPairs = zipLists(sourcesRaw, targetsRaw),
+          filteredPairs = List.Select(rawPairs, each _{0} <> null and _{1} <> null),
+          dedupPairs =
+            List.Accumulate(
+              filteredPairs,
+              {},
+              (state as list, pair as list) =>
+                let
+                  target = pair{1},
+                  seenTargets = List.Transform(state, each _{1}),
+                  exists = List.Contains(seenTargets, target)
+                in
+                  if exists then state else state & {pair}
+            ),
+          sourceColumns = List.Transform(dedupPairs, each _{0}),
+          targetNames = List.Transform(dedupPairs, each _{1}),
+          conflictTargets = List.RemoveItems(targetNames, {columnName}),
+          conflicts =
+            if columnExistsOriginal then
+              List.Intersect({Table.ColumnNames(tbl), conflictTargets})
             else
-              [HasError = true, Error = "ColumnMissing"],
+              {},
+          prepared =
+            if List.IsEmpty(conflicts) then
+              tbl
+            else
+              Table.RemoveColumns(tbl, conflicts, MissingField.Ignore),
+          columnExists = List.Contains(Table.ColumnNames(prepared), columnName),
+          expandAttempt =
+            if not columnExists then
+              [HasError = true, Error = "ColumnMissing"]
+            else if List.IsEmpty(sourceColumns) then
+              try Table.RemoveColumns(prepared, {columnName}, MissingField.Ignore)
+            else
+              try Table.ExpandTableColumn(prepared, columnName, sourceColumns, targetNames),
           fallbackExpand = () as table =>
             let
-              nestedValues = if columnExists then Table.Column(tbl, columnName) else {},
+              nestedValues = if columnExists then Table.Column(prepared, columnName) else {},
               nestedTables = List.Select(nestedValues, each _ <> null and Value.Is(_, type table)),
               nestedColumns =
                 if List.IsEmpty(nestedTables) then
                   {}
                 else
                   List.Distinct(List.Combine(List.Transform(nestedTables, each Table.ColumnNames(_)))),
-              validPairs = List.Select(pairs, each List.Contains(nestedColumns, _{0})),
+              validPairs = List.Select(dedupPairs, each List.Contains(nestedColumns, _{0})),
               validSources = List.Transform(validPairs, each _{0}),
               validTargets = List.Transform(validPairs, each _{1}),
               expanded =
                 if List.IsEmpty(validSources) then
                   if columnExists then
-                    Table.RemoveColumns(tbl, {columnName}, MissingField.Ignore)
+                    Table.RemoveColumns(prepared, {columnName}, MissingField.Ignore)
                   else
-                    tbl
+                    prepared
                 else
-                  Table.ExpandTableColumn(tbl, columnName, validSources, validTargets),
-              missingTargets = List.Transform(List.RemoveMatchingItems(pairs, validPairs), each _{1}),
+                  Table.ExpandTableColumn(prepared, columnName, validSources, validTargets),
+              missingTargets = List.Transform(List.RemoveMatchingItems(dedupPairs, validPairs), each _{1}),
               completed =
                 List.Accumulate(
                   missingTargets,
@@ -633,7 +687,7 @@ let
             in
               completed
         in
-          if not columnExists then
+          if not columnExistsOriginal then
             tbl
           else if expandAttempt[HasError] then
             fallbackExpand()
@@ -734,6 +788,7 @@ let
         NormalizeDoi = normalizeDoi,
         RemoveColumnsSafe = removeColumnsSafe,
         DropColumns = dropColumns,
+        NormalizeColumnList = normalizeColumnList,
         RenameColumnsSafe = renameColumnsSafe,
         ReplaceNullWithValue = replaceNullWithValue,
         LowercaseColumns = lowercaseColumns,
@@ -756,6 +811,7 @@ let
   NormalizeDoi = Helpers[NormalizeDoi],
   RemoveColumnsSafe = Helpers[RemoveColumnsSafe],
   DropColumns = Helpers[DropColumns],
+  NormalizeColumnList = Helpers[NormalizeColumnList],
   RenameColumnsSafe = Helpers[RenameColumnsSafe],
   ReplaceNullWithValue = Helpers[ReplaceNullWithValue],
   LowercaseColumns = Helpers[LowercaseColumns],
@@ -767,7 +823,7 @@ let
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   ZipLists = Helpers[ZipLists],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
-    Table.SelectColumns(tbl, columns, MissingField.Ignore),
+    Table.SelectColumns(tbl, NormalizeColumnList(columns), MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
     let
       typePairs = List.Transform(aggColumns, each {_, Int64.Type}),
@@ -2632,7 +2688,8 @@ let
         "protein_class_pred_L3",
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
-        "protein_class_pred_confidence"
+        "protein_class_pred_confidence",
+        "protein_classifications"
       },
       IupharIdCols = {
         "iuphar_target_id",
@@ -3484,9 +3541,15 @@ let
           mergeIuphar = (src as table) as table =>
             let
               trimmed = Drop(src, List.Combine({dropPrediction, dropIupharId})),
-              joined = Table.NestedJoin(trimmed, {"target_chembl_id"}, buildIntermediate(), {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter)
+              joined = Table.NestedJoin(trimmed, {"target_chembl_id"}, buildIntermediate(), {"target_chembl_id"}, "IUPHAR", JoinKind.LeftOuter),
+              expanded = ExpandTableColumnSafe(
+                joined,
+                "IUPHAR",
+                List.Combine({dropPrediction, dropIupharId}),
+                List.Combine({dropPrediction, dropIupharId})
+              )
             in
-              Table.ExpandTableColumn(joined, "IUPHAR", List.Combine({dropPrediction, dropIupharId}), List.Combine({dropPrediction, dropIupharId})),
+              expanded,
           buildIntermediate = () as table =>
             IUPHAR_int(),
           buildKnown = () as table =>
@@ -3502,7 +3565,7 @@ let
                 "org",
                 JoinKind.LeftOuter
               ),
-              expandedOrg = Table.ExpandTableColumn(
+              expandedOrg = ExpandTableColumnSafe(
                 joinedOrg,
                 "org",
                 {"organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme"},
@@ -3516,7 +3579,7 @@ let
                 "act",
                 JoinKind.LeftOuter
               ),
-              expandedAct = Table.ExpandTableColumn(joinedAct, "act", {"reaction_ec_numbers"}, {"ec_number"}),
+              expandedAct = ExpandTableColumnSafe(joinedAct, "act", {"reaction_ec_numbers"}, {"ec_number"}),
               direct = mergeIuphar(expandedAct),
               baseKnown = Table.SelectRows(direct, each ToText([iuphar_family_id]) <> "N/A" or ToText([cellularity]) = "unicellular"),
               trimmedBase = Drop(baseKnown, {"gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "ec_number"}),
@@ -3525,7 +3588,12 @@ let
                   candidates = Table.SelectRows(direct, each ToText([iuphar_full_id_path]) = ""),
                   trimmedCandidates = Drop(candidates, dropIupharId),
                   joinClass1 = Table.NestedJoin(trimmedCandidates, {"protein_class_pred_L1"}, classification, {"iuphar_class"}, "cls", JoinKind.LeftOuter),
-                  expandClass1 = Table.ExpandTableColumn(joinClass1, "cls", List.Combine({dropIupharId, {"Column1", "Column2"}}), List.Combine({dropIupharId, {"Column1", "Column2"}})),
+                  expandClass1 = ExpandTableColumnSafe(
+                    joinClass1,
+                    "cls",
+                    List.Combine({dropIupharId, {"Column1", "Column2"}}),
+                    List.Combine({dropIupharId, {"Column1", "Column2"}})
+                  ),
                   filteredClass1 = Table.SelectRows(expandClass1, each [Column2] <> null),
                   cleanedClass1 = Drop(filteredClass1, {"Column1", "Column2"})
                 in
@@ -3535,7 +3603,12 @@ let
                   candidates = Table.SelectRows(direct, each ToText([iuphar_full_id_path]) = ""),
                   trimmedCandidates = Drop(candidates, dropIupharId),
                   joinClass2 = Table.NestedJoin(trimmedCandidates, {"protein_class_pred_L2"}, classification, {"Column2"}, "cls", JoinKind.LeftOuter),
-                  expandClass2 = Table.ExpandTableColumn(joinClass2, "cls", List.Combine({dropIupharId, {"Column1", "Column2"}}), List.Combine({dropIupharId, {"Column1", "Column2"}})),
+                  expandClass2 = ExpandTableColumnSafe(
+                    joinClass2,
+                    "cls",
+                    List.Combine({dropIupharId, {"Column1", "Column2"}}),
+                    List.Combine({dropIupharId, {"Column1", "Column2"}})
+                  ),
                   filteredClass2 = Table.SelectRows(expandClass2, each [iuphar_chain] <> null),
                   dedupClass2 = Table.Distinct(filteredClass2, {"target_chembl_id", "uniprot_id_primary"})
                 in
@@ -3548,7 +3621,7 @@ let
                   typed = TransformColumnTypesSafe(filteredMajor, {{"ec_major", Int64.Type}, {"ec_minor", type text}}),
                   joined = Table.NestedJoin(typed, {"ec_major"}, classification, {"ec"}, "cls", JoinKind.LeftOuter),
                   trimmed = Drop(joined, dropIupharId),
-                  expanded = Table.ExpandTableColumn(trimmed, "cls", dropIupharId, dropIupharId),
+                  expanded = ExpandTableColumnSafe(trimmed, "cls", dropIupharId, dropIupharId),
                   appended = Table.Combine({expanded, fallback, fallback2}),
                   deduplicated = Table.Distinct(appended, {"target_chembl_id"}),
                   cleaned = Drop(
@@ -3589,13 +3662,13 @@ let
                 "Known",
                 JoinKind.LeftOuter
               ),
-              expanded = Table.ExpandTableColumn(joined, "Known", {"target_chembl_id"}, {"known_id"}),
+              expanded = ExpandTableColumnSafe(joined, "Known", {"target_chembl_id"}, {"known_id"}),
               withoutKnown = Table.SelectRows(expanded, each [known_id] = null),
               distinctTargets = Table.Distinct(withoutKnown, {"target_chembl_id"}),
               withFallbackKey = Table.AddColumn(distinctTargets, "ec_key", each 100, Int64.Type),
               joinedClass = Table.NestedJoin(withFallbackKey, {"ec_key"}, classification, {"ec"}, "cls", JoinKind.LeftOuter),
               trimmed = Drop(joinedClass, dropIupharId),
-              expandedClass = Table.ExpandTableColumn(trimmed, "cls", dropIupharId, dropIupharId),
+              expandedClass = ExpandTableColumnSafe(trimmed, "cls", dropIupharId, dropIupharId),
               withoutTech = Drop(expandedClass, {"ec_number", "ec_key"}),
               combined = Table.Combine({distinctKnown, withoutTech}),
               deduplicated = Table.Distinct(combined, {"target_chembl_id"})
@@ -3661,6 +3734,7 @@ let
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
         "protein_class_pred_confidence",
+        "protein_classifications",
         "iuphar_target_id",
         "iuphar_family_id",
         "iuphar_type",
