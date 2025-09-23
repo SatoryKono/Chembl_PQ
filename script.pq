@@ -581,12 +581,57 @@ let
           tbl
         else
           transformColumnTypesSafe(tbl, List.Transform(columns, each {_, type text}), culture),
-      expandTableColumnSafe = (tbl as table, columnName as text, columnsToExpand as list, optional newColumnNames as nullable list) as table =>
+      expandTableColumnSafe = (
+          tbl as table,
+          columnName as text,
+          columnsToExpand as list,
+          optional newColumnNames as nullable list
+        ) as table =>
         let
+          columnExists = List.Contains(Table.ColumnNames(tbl), columnName),
           targetNames = if newColumnNames = null then columnsToExpand else newColumnNames,
-          expanded = Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames, MissingField.Ignore)
+          pairs = zipLists(columnsToExpand, targetNames),
+          expandAttempt =
+            if columnExists then
+              try Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames)
+            else
+              [HasError = true, Error = "ColumnMissing"],
+          fallbackExpand = () as table =>
+            let
+              nestedValues = if columnExists then Table.Column(tbl, columnName) else {},
+              nestedTables = List.Select(nestedValues, each _ <> null and Value.Is(_, type table)),
+              nestedColumns =
+                if List.IsEmpty(nestedTables) then
+                  {}
+                else
+                  List.Distinct(List.Combine(List.Transform(nestedTables, each Table.ColumnNames(_)))),
+              validPairs = List.Select(pairs, each List.Contains(nestedColumns, _{0})),
+              validSources = List.Transform(validPairs, each _{0}),
+              validTargets = List.Transform(validPairs, each _{1}),
+              expanded =
+                if List.IsEmpty(validSources) then
+                  if columnExists then
+                    Table.RemoveColumns(tbl, {columnName}, MissingField.Ignore)
+                  else
+                    tbl
+                else
+                  Table.ExpandTableColumn(tbl, columnName, validSources, validTargets),
+              missingTargets = List.Transform(List.RemoveMatchingItems(pairs, validPairs), each _{1}),
+              completed =
+                List.Accumulate(
+                  missingTargets,
+                  expanded,
+                  (state as table, missingName as text) => ensureColumn(state, missingName, null, type any)
+                )
+            in
+              completed
         in
-          expanded,
+          if not columnExists then
+            tbl
+          else if expandAttempt[HasError] then
+            fallbackExpand()
+          else
+            expandAttempt[Value],
       joinAndExpand = (
           source as table,
           sourceKeys as list,
