@@ -8,7 +8,7 @@
 // - Protected safe expansion helper from conflicting column names before nested joins are expanded.
 // - Wrapped IUPHAR expansions with safe helper to prevent duplicate protein classification collisions.
 // - Removed residual protein_classifications column before joining IUPHAR data to avoid duplicate-field expansion errors.
-
+// - Stripped protein_classifications from the IUPHAR known target feed so downstream expansions cannot reintroduce duplicate fields.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -3647,9 +3647,10 @@ let
                 in
                   cleaned,
               knownUnion = Table.Combine({trimmedBase, enzymeFallback}),
-              distinctKnown = Table.Distinct(knownUnion, {"target_chembl_id"})
+              distinctKnown = Table.Distinct(knownUnion, {"target_chembl_id"}),
+              knownWithoutPred = Drop(distinctKnown, dropPrediction)
             in
-              distinctKnown,
+              knownWithoutPred,
           buildFinal = () as table =>
             let
               activityBase = ActivityModule[Build](Data[Target_out]),
