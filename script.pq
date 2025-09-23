@@ -4,7 +4,9 @@
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
+
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
+
 
 let
   // ===== Parameters =====
@@ -474,7 +476,12 @@ let
           buildCandidate = (colName as text) as text =>
             let
               rawValue = Record.Field(firstRow, colName),
-              normalizedValue = normalizeWhitespace(rawValue, false),
+              normalizedAttempt = try normalizeWhitespace(rawValue, false) otherwise null,
+              normalizedValue =
+                if Value.Is(normalizedAttempt, type text) or normalizedAttempt = null then
+                  normalizedAttempt
+                else
+                  null,
               fallbackName = colName
             in
               if normalizedValue = null then fallbackName else normalizedValue,
