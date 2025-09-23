@@ -4,6 +4,8 @@
 // - Introduced loader configuration with early column selection and culture-aware typing.
 // - Restored cellularity enrichment logic and aligned organism lineage mapping.
 // - Stabilized header promotion with sanitization and deterministic fallback naming.
+// - Normalized reusable column lists to prevent duplicate-field selection errors in downstream queries.
+// - Protected safe expansion helper from conflicting column names before nested joins are expanded.
 
 // - Resolved target module naming collision causing missing 'main' column errors in exports.
 // - Reintroduced typed TargetHandlers export for compatibility with dependent queries.
@@ -306,9 +308,21 @@ let
       applySelectColumns = (tbl as table, options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
-          columns = if Record.HasFields(opts, {"SelectColumns"}) then Record.Field(opts, "SelectColumns") else null
+          columnsRaw =
+            if Record.HasFields(opts, {"SelectColumns"}) then
+              Record.Field(opts, "SelectColumns")
+            else
+              null,
+          columnsSanitized =
+            if columnsRaw = null then
+              {}
+            else
+              NormalizeColumnList(columnsRaw)
         in
-          if columns = null then tbl else Table.SelectColumns(tbl, columns, MissingField.Ignore),
+          if columnsRaw = null then
+            tbl
+          else
+            Table.SelectColumns(tbl, columnsSanitized, MissingField.Ignore),
       loadCsv = (pathRel as text, optional options as nullable record) as table =>
         let
           opts = if options = null then [] else options,
@@ -559,15 +573,23 @@ let
             tbl
           else
             Table.RemoveColumns(tbl, cols, MissingField.Ignore),
+      normalizeColumnList = (columns as nullable list) as list =>
+        let
+          base = if columns = null then {} else columns,
+          nonNull = List.Select(base, each _ <> null),
+          distinct = List.Distinct(nonNull)
+        in
+          distinct,
       selectColumnsInOrder = (tbl as table, optional columnOrder as nullable list) as table =>
         let
-          order = if columnOrder = null then {} else columnOrder,
-          existing = List.Intersect({order, Table.ColumnNames(tbl)})
+          order = normalizeColumnList(columnOrder),
+          existing = List.Intersect({order, Table.ColumnNames(tbl)}),
+          sanitized = normalizeColumnList(existing)
         in
-          if List.Count(existing) = 0 then
+          if List.Count(sanitized) = 0 then
             tbl
           else
-            Table.SelectColumns(tbl, existing, MissingField.Ignore),
+            Table.SelectColumns(tbl, sanitized, MissingField.Ignore),
       renameColumnsSafe = (tbl as table, renames as list) as table =>
         if renames = null or List.Count(renames) = 0 then
           tbl
@@ -595,35 +617,65 @@ let
           optional newColumnNames as nullable list
         ) as table =>
         let
-          columnExists = List.Contains(Table.ColumnNames(tbl), columnName),
-          targetNames = if newColumnNames = null then columnsToExpand else newColumnNames,
-          pairs = zipLists(columnsToExpand, targetNames),
-          expandAttempt =
-            if columnExists then
-              try Table.ExpandTableColumn(tbl, columnName, columnsToExpand, targetNames)
+          columnExistsOriginal = List.Contains(Table.ColumnNames(tbl), columnName),
+          sourcesRaw = if columnsToExpand = null then {} else columnsToExpand,
+          targetsRaw = if newColumnNames = null then sourcesRaw else newColumnNames,
+          rawPairs = zipLists(sourcesRaw, targetsRaw),
+          filteredPairs = List.Select(rawPairs, each _{0} <> null and _{1} <> null),
+          dedupPairs =
+            List.Accumulate(
+              filteredPairs,
+              {},
+              (state as list, pair as list) =>
+                let
+                  target = pair{1},
+                  seenTargets = List.Transform(state, each _{1}),
+                  exists = List.Contains(seenTargets, target)
+                in
+                  if exists then state else state & {pair}
+            ),
+          sourceColumns = List.Transform(dedupPairs, each _{0}),
+          targetNames = List.Transform(dedupPairs, each _{1}),
+          conflictTargets = List.RemoveItems(targetNames, {columnName}),
+          conflicts =
+            if columnExistsOriginal then
+              List.Intersect({Table.ColumnNames(tbl), conflictTargets})
             else
-              [HasError = true, Error = "ColumnMissing"],
+              {},
+          prepared =
+            if List.IsEmpty(conflicts) then
+              tbl
+            else
+              Table.RemoveColumns(tbl, conflicts, MissingField.Ignore),
+          columnExists = List.Contains(Table.ColumnNames(prepared), columnName),
+          expandAttempt =
+            if not columnExists then
+              [HasError = true, Error = "ColumnMissing"]
+            else if List.IsEmpty(sourceColumns) then
+              try Table.RemoveColumns(prepared, {columnName}, MissingField.Ignore)
+            else
+              try Table.ExpandTableColumn(prepared, columnName, sourceColumns, targetNames),
           fallbackExpand = () as table =>
             let
-              nestedValues = if columnExists then Table.Column(tbl, columnName) else {},
+              nestedValues = if columnExists then Table.Column(prepared, columnName) else {},
               nestedTables = List.Select(nestedValues, each _ <> null and Value.Is(_, type table)),
               nestedColumns =
                 if List.IsEmpty(nestedTables) then
                   {}
                 else
                   List.Distinct(List.Combine(List.Transform(nestedTables, each Table.ColumnNames(_)))),
-              validPairs = List.Select(pairs, each List.Contains(nestedColumns, _{0})),
+              validPairs = List.Select(dedupPairs, each List.Contains(nestedColumns, _{0})),
               validSources = List.Transform(validPairs, each _{0}),
               validTargets = List.Transform(validPairs, each _{1}),
               expanded =
                 if List.IsEmpty(validSources) then
                   if columnExists then
-                    Table.RemoveColumns(tbl, {columnName}, MissingField.Ignore)
+                    Table.RemoveColumns(prepared, {columnName}, MissingField.Ignore)
                   else
-                    tbl
+                    prepared
                 else
-                  Table.ExpandTableColumn(tbl, columnName, validSources, validTargets),
-              missingTargets = List.Transform(List.RemoveMatchingItems(pairs, validPairs), each _{1}),
+                  Table.ExpandTableColumn(prepared, columnName, validSources, validTargets),
+              missingTargets = List.Transform(List.RemoveMatchingItems(dedupPairs, validPairs), each _{1}),
               completed =
                 List.Accumulate(
                   missingTargets,
@@ -633,7 +685,7 @@ let
             in
               completed
         in
-          if not columnExists then
+          if not columnExistsOriginal then
             tbl
           else if expandAttempt[HasError] then
             fallbackExpand()
@@ -734,6 +786,7 @@ let
         NormalizeDoi = normalizeDoi,
         RemoveColumnsSafe = removeColumnsSafe,
         DropColumns = dropColumns,
+        NormalizeColumnList = normalizeColumnList,
         RenameColumnsSafe = renameColumnsSafe,
         ReplaceNullWithValue = replaceNullWithValue,
         LowercaseColumns = lowercaseColumns,
@@ -756,6 +809,7 @@ let
   NormalizeDoi = Helpers[NormalizeDoi],
   RemoveColumnsSafe = Helpers[RemoveColumnsSafe],
   DropColumns = Helpers[DropColumns],
+  NormalizeColumnList = Helpers[NormalizeColumnList],
   RenameColumnsSafe = Helpers[RenameColumnsSafe],
   ReplaceNullWithValue = Helpers[ReplaceNullWithValue],
   LowercaseColumns = Helpers[LowercaseColumns],
@@ -767,7 +821,7 @@ let
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   ZipLists = Helpers[ZipLists],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
-    Table.SelectColumns(tbl, columns, MissingField.Ignore),
+    Table.SelectColumns(tbl, NormalizeColumnList(columns), MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
     let
       typePairs = List.Transform(aggColumns, each {_, Int64.Type}),
