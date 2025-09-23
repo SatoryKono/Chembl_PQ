@@ -317,7 +317,12 @@ let
             ]
           ),
           promoteHeaders = if Record.HasFields(opts, {"PromoteHeaders"}) then Record.Field(opts, "PromoteHeaders") else true,
-          withHeaders = if promoteHeaders then Table.PromoteHeaders(csv, [PromoteAllScalars = true]) else csv,
+          promoteContext = [
+            SourceKind = Parameters[SourceKind],
+            PathKey = pathKey,
+            RelativePath = pathRel
+          ],
+          withHeaders = if promoteHeaders then PromoteHeadersSafe(csv, promoteContext) else csv,
           result = applySelectColumns(withHeaders, opts)
         in
           result,
@@ -445,6 +450,27 @@ let
               Table.AddColumn(tbl, columnName, each defaultValue)
         in
           result,
+      promoteHeadersSafe = (tbl as table, optional context as nullable record) as table =>
+        let
+          attempt = try Table.PromoteHeaders(tbl, [PromoteAllScalars = true]),
+          promoted =
+            if attempt[HasError] then
+              let
+                details =
+                  if context = null then
+                    [Reason = attempt[Error]]
+                  else
+                    Record.Combine({context, [Reason = attempt[Error]]})
+              in
+                error Error.Record(
+                  "Helpers.PromoteHeadersSafe",
+                  "Не удалось преобразовать первую строку в заголовки.",
+                  details
+                )
+            else
+              attempt[Value]
+        in
+          promoted,
       transformColumnTypesSafe = (tbl as table, typeList as list, optional culture as nullable text) as table =>
         let
           columnNames = Table.ColumnNames(tbl),
@@ -594,6 +620,7 @@ let
         NormalizeWhitespace = normalizeWhitespace,
         CleanPipe = cleanPipe,
         EnsureColumn = ensureColumn,
+        PromoteHeadersSafe = promoteHeadersSafe,
         TransformColumnTypesSafe = transformColumnTypesSafe,
         NormalizePages = normalizePages,
         TryNumber = tryNumber,
@@ -614,6 +641,7 @@ let
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
   CleanPipe = Helpers[CleanPipe],
   EnsureColumn = Helpers[EnsureColumn],
+  PromoteHeadersSafe = Helpers[PromoteHeadersSafe],
   TransformColumnTypesSafe = Helpers[TransformColumnTypesSafe],
   NormalizePages = Helpers[NormalizePages],
   TryNumber = Helpers[TryNumber],
