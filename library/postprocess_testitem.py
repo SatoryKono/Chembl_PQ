@@ -5,9 +5,16 @@ from typing import Dict
 
 import pandas as pd
 
+# Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
+
 from .postprocess_document import _prepare_activity
 from .transforms import to_text
-from .utils import coerce_types, finalize_aggregate_columns, safe_merge
+from .utils import (
+    coerce_types,
+    ensure_columns,
+    finalize_aggregate_columns,
+    safe_merge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +55,13 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     base_schema = {
         "molecule_chembl_id": "string",
         "pref_name": "string",
+        "all_names": "string",
         "molecule_type": "string",
         "structure_type": "string",
+        "is_radical": "boolean",
         "molecule_structures.standard_inchi_key": "string",
-        "unknown_chirality": "string",        
+        "standard_inchi_key": "string",
+        "unknown_chirality": "string",
         "nstereo": "Int64",
         "document_chembl_id": "string",
     }
@@ -124,12 +134,14 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "nstereo" in enriched.columns:
         enriched = enriched.drop(columns=["nstereo"])
 
-    column_types = config.get("pipeline", {}).get("testitem", {}).get("type_map", {})
-    typed_result = coerce_types(enriched, column_types)
+    pipeline_testitem = config.get("pipeline", {}).get("testitem", {})
+    column_types = pipeline_testitem.get("type_map", {})
+    column_order = pipeline_testitem.get("column_order", [])
 
-    column_order = (
-        config.get("pipeline", {}).get("testitem", {}).get("column_order", [])
-    )
+    required_columns = column_order or list(column_types.keys())
+    completed = ensure_columns(enriched, required_columns, column_types)
+    typed_result = coerce_types(completed, column_types)
+
     if column_order:
         missing = [col for col in column_order if col not in typed_result.columns]
         if missing:
