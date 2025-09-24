@@ -57,6 +57,26 @@ def coerce_types(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     return result
 
 
+def ensure_columns(
+    df: pd.DataFrame, columns: Sequence[str], type_map: Dict[str, Any] | None = None
+) -> pd.DataFrame:
+    result = df.copy()
+    column_types = type_map or {}
+    for column in columns:
+        if column in result.columns:
+            continue
+        resolved = _resolve_dtype(column_types.get(column, "string"))
+        if resolved in {"Int64", "int64"}:
+            result[column] = pd.Series(pd.NA, index=result.index, dtype="Int64")
+        elif resolved in {"boolean", "bool"}:
+            result[column] = pd.Series(pd.NA, index=result.index, dtype="boolean")
+        elif resolved == "string":
+            result[column] = pd.Series(pd.NA, index=result.index, dtype="string")
+        else:
+            result[column] = pd.Series(pd.NA, index=result.index, dtype=resolved)
+    return result
+
+
 def safe_merge(
     left: pd.DataFrame,
     right: pd.DataFrame,
@@ -104,4 +124,5 @@ __all__ = [
     "deduplicate",
     "finalize_aggregate_columns",
     "sort_dataframe",
+    "ensure_columns",
 ]
