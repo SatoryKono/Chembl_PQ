@@ -1,0 +1,3 @@
+PMID,doi,sort_order,completed,invalid_record,title,abstract,authors,PubMed.MeSH,OpenAlex.MeSH,MeSH.qualifiers,chemical_list,ChEMBL.document_chembl_id,PubMed.publication_type,scholar.PublicationTypes,OpenAlex.publication_type,OpenAlex.crossref_type,OpenAlex.Genre,crossref.publication_type,document_contains_external_links,is_experimental_doc,review
+1001,10.1000/xyz,"001",2020-01-01,false,Title A,Abstract A,"Author One|Author Two","Term1|Term2","OA1|OA2",Qual1,Chem1,DOC1,"Review|Lecture",Review,Article,journal-article,Article,journal-article,true,false,true
+1002,10.1000/abc,"002",2021-06-01,false,Title B,Abstract B,Author Three,"Term3|Term4",OA3,Qual2,Chem2,DOC2,"Clinical Trial, Phase II",Study,Journal,journal-article,Article,journal-article,false,true,false
