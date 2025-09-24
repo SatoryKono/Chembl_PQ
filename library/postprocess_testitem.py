@@ -5,6 +5,8 @@ from typing import Dict
 
 import pandas as pd
 
+# Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
+
 from .postprocess_document import _prepare_activity
 from .transforms import to_text
 from .utils import coerce_types, finalize_aggregate_columns, safe_merge
@@ -48,10 +50,13 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     base_schema = {
         "molecule_chembl_id": "string",
         "pref_name": "string",
+        "all_names": "string",
         "molecule_type": "string",
         "structure_type": "string",
+        "is_radical": "boolean",
         "molecule_structures.standard_inchi_key": "string",
-        "unknown_chirality": "string",        
+        "standard_inchi_key": "string",
+        "unknown_chirality": "string",
         "nstereo": "Int64",
         "document_chembl_id": "string",
     }
