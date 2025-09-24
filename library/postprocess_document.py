@@ -264,6 +264,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     column_order = document_cfg.get("column_order", [])
     if column_order:
+        typed = ensure_columns(typed, column_order, column_types)
         missing = [col for col in column_order if col not in typed.columns]
         if missing:
             raise ValueError(f"Document output is missing columns: {missing}")
