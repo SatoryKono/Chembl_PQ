@@ -1,0 +1,317 @@
+source:
+  kind: file
+  base_path: "tests/data"
+  http_base: ""
+  sharepoint:
+    site_url: ""
+    library: ""
+    auth: env
+
+files:
+  document_csv: "document.csv"
+  activity_csv: "activity.csv"
+  citation_fraction_csv: "citation_fraction.csv"
+  testitem_csv: "testitem.csv"
+  assay_csv: "assay.csv"
+  target_csv: "target.csv"
+
+io:
+  encoding_in: utf8
+  encoding_out: utf8
+  delimiter: ","
+  quoting: minimal
+  na_values: ["", "NA", "null", "None"]
+
+options:
+  strict_types: true
+  preserve_order: true
+  fail_on_schema_mismatch: true
+  dateformat: "YYYY-MM-DD"
+
+cleaning:
+  alias_maps: {}
+  drop_lists: {}
+  sort_pipes: true
+
+pipeline:
+  document:
+    classification_rules:
+      - column: "PubMed.publication_type"
+        alias:
+          clinical trial, phase i: clinical trial
+          clinical trial, phase ii: clinical trial
+          historical article: review
+          validation study: validation study
+          lecture: review
+          address: review
+        drop:
+          - journal-article
+          - journal article
+          - article
+          - journal
+      - column: "scholar.PublicationTypes"
+        alias:
+          study: null
+          clinicaltrial: clinicaltrial
+          review: review
+          lettersandcomments: lettersandcomments
+        drop:
+          - journalarticle
+          - study
+      - column: "OpenAlex.publication_type"
+        alias:
+          paratext: paratext
+          component: paratext
+          article: null
+          journal: null
+          journal-article: null
+          journal article: null
+        drop:
+          - 0
+          - article
+          - journal
+          - journal-article
+          - journal article
+      - column: "OpenAlex.crossref_type"
+        alias:
+          journal-article: null
+          article: null
+        drop:
+          - journal-article
+          - article
+      - column: "OpenAlex.Genre"
+        alias:
+          article: null
+          0: null
+        drop:
+          - 0
+          - article
+      - column: "crossref.publication_type"
+        alias:
+          journal-article: null
+          article: null
+        drop:
+          - journal-article
+          - article
+    review:
+      base_weight: 2
+      threshold: 0.335
+      response_columns:
+        - "PubMed.publication_type"
+        - "scholar.PublicationTypes"
+        - "OpenAlex.publication_type"
+        - "OpenAlex.crossref_type"
+    type_map:
+      PMID: Int64
+      doi: string
+      sort_order: string
+      completed: string
+      invalid_record: bool
+      title: string
+      abstract: string
+      authors: string
+      PubMed.MeSH: string
+      OpenAlex.MeSH: string
+      MeSH.qualifiers: string
+      chemical_list: string
+      ChEMBL.document_chembl_id: string
+      PubMed.publication_type: string
+      scholar.PublicationTypes: string
+      OpenAlex.publication_type: string
+      OpenAlex.crossref_type: string
+      OpenAlex.Genre: string
+      crossref.publication_type: string
+      significant_citations_fraction: bool
+      document_contains_external_links: bool
+      is_experimental_doc: bool
+      n_activity: Int64
+      citations: Int64
+      n_assay: Int64
+      n_testitem: Int64
+      n_responces: Int64
+      review: bool
+      is_experimental: bool
+    column_order:
+      - PMID
+      - doi
+      - sort_order
+      - completed
+      - invalid_record
+      - title
+      - abstract
+      - authors
+      - PubMed.MeSH
+      - OpenAlex.MeSH
+      - MeSH.qualifiers
+      - chemical_list
+      - ChEMBL.document_chembl_id
+      - PubMed.publication_type
+      - scholar.PublicationTypes
+      - OpenAlex.publication_type
+      - OpenAlex.crossref_type
+      - OpenAlex.Genre
+      - crossref.publication_type
+      - significant_citations_fraction
+      - document_contains_external_links
+      - is_experimental_doc
+      - n_activity
+      - citations
+      - n_assay
+      - n_testitem
+      - n_responces
+      - review
+      - is_experimental
+    formatters:
+      zero_pad:
+        sort_order: 3
+  testitem:
+    invalid_rules:
+      molecule_type: "Small molecule"
+      structure_type: "MOL"
+    chirality_reference: 1
+    type_map:
+      molecule_chembl_id: string
+      pref_name: string
+      all_names: string
+      molecule_type: string
+      structure_type: string
+      is_radical: bool
+      standard_inchi_key: string
+      unknown_chirality: bool
+      document_chembl_id: string
+      document_testitem_total: Int64
+      invalid_record: bool
+    column_order:
+      - molecule_chembl_id
+      - pref_name
+      - all_names
+      - molecule_type
+      - structure_type
+      - is_radical
+      - standard_inchi_key
+      - unknown_chirality
+      - document_chembl_id
+      - document_testitem_total
+      - invalid_record
+  assay:
+    drop_columns:
+      - assay_tax_id
+      - confidence_score
+      - confidence_description
+      - relationship_type
+      - relationship_description
+      - assay_strain
+    type_map:
+      assay_chembl_id: string
+      document_chembl_id: string
+      target_chembl_id: string
+      assay_category: string
+      assay_group: string
+      assay_type: string
+      assay_type_description: string
+      assay_organism: string
+      assay_test_type: string
+      assay_cell_type: string
+      assay_tissue: string
+      assay_with_same_target: Int64
+      bao_format: string
+      bao_label: string
+      aidx: string
+      assay_classifications: string
+      assay_parameters: string
+      assay_subcellular_fraction: string
+      cell_chembl_id: string
+      description: string
+      src_assay_id: string
+      src_id: Int64
+      tissue_chembl_id: string
+      variant_sequence: string
+      document_assay_total: Int64
+    column_order:
+      - assay_chembl_id
+      - document_chembl_id
+      - target_chembl_id
+      - assay_category
+      - assay_group
+      - assay_type
+      - assay_type_description
+      - assay_organism
+      - assay_test_type
+      - assay_cell_type
+      - assay_tissue
+      - assay_with_same_target
+      - bao_format
+      - bao_label
+      - aidx
+      - assay_classifications
+      - assay_parameters
+      - assay_subcellular_fraction
+      - cell_chembl_id
+      - description
+      - src_assay_id
+      - src_id
+      - tissue_chembl_id
+      - variant_sequence
+      - document_assay_total
+  target:
+    output_columns:
+      - target_chembl_id
+      - uniprot_id_primary
+      - recommended_name
+      - gene_name
+      - synonyms
+      - protein_class_pred_L1
+      - protein_class_pred_L2
+      - protein_class_pred_L3
+      - protein_class_pred_rule_id
+      - protein_class_pred_evidence
+      - protein_class_pred_confidence
+      - taxon_id
+      - lineage_superkingdom
+      - lineage_phylum
+      - lineage_class
+      - reaction_ec_numbers
+      - cellularity
+      - multifunctional_enzyme
+      - iuphar_name
+      - iuphar_target_id
+      - iuphar_family_id
+      - iuphar_type
+      - iuphar_class
+      - iuphar_subclass
+      - iuphar_chain
+      - iuphar_full_id_path
+      - iuphar_full_name_path
+    type_map:
+      target_chembl_id: string
+      uniprot_id_primary: string
+      recommended_name: string
+      gene_name: string
+      synonyms: string
+      protein_class_pred_L1: string
+      protein_class_pred_L2: string
+      protein_class_pred_L3: string
+      protein_class_pred_rule_id: string
+      protein_class_pred_evidence: string
+      protein_class_pred_confidence: string
+      taxon_id: Int64
+      lineage_superkingdom: string
+      lineage_phylum: string
+      lineage_class: string
+      reaction_ec_numbers: string
+      cellularity: string
+      multifunctional_enzyme: string
+      iuphar_name: string
+      iuphar_target_id: string
+      iuphar_family_id: string
+      iuphar_type: string
+      iuphar_class: string
+      iuphar_subclass: string
+      iuphar_chain: string
+      iuphar_full_id_path: string
+      iuphar_full_name_path: string
+
+outputs:
+  dir: "tests/data/expected"
+  overwrite: true
+  line_terminator: "\n"
