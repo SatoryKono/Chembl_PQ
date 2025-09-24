@@ -65,6 +65,7 @@ def _read_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
         "na_values": io_cfg.get("na_values", ["", "NA", "null", "None"]),
         "keep_default_na": False,
         "dtype": None,
+        "low_memory": False,
     }
     kwargs["quoting"] = _QUOTING_MAP[quoting]
     return kwargs
