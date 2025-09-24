@@ -228,6 +228,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "K_min_significant" in normalized.columns:
         normalized = normalized.drop(columns=["K_min_significant"])
 
+
     column_types = config.get("pipeline", {}).get("document", {}).get("type_map", {})
     column_order = (
         config.get("pipeline", {}).get("document", {}).get("column_order", [])
@@ -236,9 +237,10 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if required_columns:
         normalized = ensure_columns(normalized, required_columns, column_types)
 
+
     typed = coerce_types(normalized, column_types)
 
-    formatters = config.get("pipeline", {}).get("document", {}).get("formatters", {})
+    formatters = document_cfg.get("formatters", {})
     zero_pad = formatters.get("zero_pad", {})
     for column, width in zero_pad.items():
         if column in typed.columns:
@@ -254,7 +256,11 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
                 .astype("string")
             )
 
+
+    column_order = document_cfg.get("column_order", [])
+
     if column_order:
+        typed = ensure_columns(typed, column_order, column_types)
         missing = [col for col in column_order if col not in typed.columns]
         if missing:
             raise ValueError(f"Document output is missing columns: {missing}")

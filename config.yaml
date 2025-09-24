@@ -176,9 +176,11 @@ pipeline:
     type_map:
       molecule_chembl_id: string
       pref_name: string
+      all_names: string
       molecule_type: string
       structure_type: string
-      molecule_structures.standard_inchi_key: string
+      is_radical: bool
+      standard_inchi_key: string
       unknown_chirality: bool
       document_chembl_id: string
       document_testitem_total: Int64
@@ -186,9 +188,11 @@ pipeline:
     column_order:
       - molecule_chembl_id
       - pref_name
+      - all_names
       - molecule_type
       - structure_type
-      - molecule_structures.standard_inchi_key
+      - is_radical
+      - standard_inchi_key
       - unknown_chirality
       - document_chembl_id
       - document_testitem_total
