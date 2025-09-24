@@ -6,7 +6,7 @@ from typing import Dict
 import pandas as pd
 
 from .transforms import clean_pipe
-from .utils import coerce_types, deduplicate
+from .utils import coerce_types, deduplicate, ensure_columns
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +24,17 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             sort=config.get("cleaning", {}).get("sort_pipes", True),
         )
 
-    type_map = config.get("pipeline", {}).get("target", {}).get("type_map", {})
-    typed = coerce_types(target_df, type_map)
-
     output_columns = (
         config.get("pipeline", {}).get("target", {}).get("output_columns", [])
     )
+    type_map = config.get("pipeline", {}).get("target", {}).get("type_map", {})
+
     if output_columns:
-        missing = [col for col in output_columns if col not in typed.columns]
-        if missing:
-            raise ValueError(f"Target output is missing columns: {missing}")
+        target_df = ensure_columns(target_df, output_columns, type_map)
+
+    typed = coerce_types(target_df, type_map)
+
+    if output_columns:
         typed = typed.loc[:, output_columns]
 
     if "target_chembl_id" in typed.columns:

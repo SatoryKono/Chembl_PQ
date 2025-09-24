@@ -46,3 +46,26 @@ def test_target_postprocess(target_inputs, test_config) -> None:
     expected = coerce_types(expected, type_map)
 
     pdt.assert_frame_equal(result, expected)
+
+
+def test_target_postprocess_missing_columns(test_config) -> None:
+    minimal = pd.DataFrame(
+        {
+            "target_chembl_id": ["T1"],
+            "uniprot_id_primary": ["P12345"],
+        }
+    )
+
+    inputs = {"target": minimal}
+
+    result = run(inputs, test_config)
+
+    output_columns = test_config["pipeline"]["target"]["output_columns"]
+    expected = pd.DataFrame([{column: pd.NA for column in output_columns}])
+    expected.loc[0, "target_chembl_id"] = "T1"
+    expected.loc[0, "uniprot_id_primary"] = "P12345"
+
+    type_map = test_config["pipeline"]["target"]["type_map"]
+    expected = coerce_types(expected, type_map)
+
+    pdt.assert_frame_equal(result, expected)
