@@ -48,11 +48,10 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     base_schema = {
         "molecule_chembl_id": "string",
         "pref_name": "string",
-        "all_names": "string",
         "molecule_type": "string",
         "structure_type": "string",
-        "is_radical": "boolean",
-        "standard_inchi_key": "string",
+        "molecule_structures.standard_inchi_key": "string",
+        "unknown_chirality": "string",        
         "nstereo": "Int64",
         "document_chembl_id": "string",
     }
@@ -65,8 +64,8 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     if "all_names" in typed.columns:
         typed["all_names"] = typed["all_names"].fillna("")
-    if "standard_inchi_key" in typed.columns:
-        typed["standard_inchi_key"] = typed["standard_inchi_key"].fillna("")
+    if "molecule_structures.standard_inchi_key" in typed.columns:
+        typed["molecule_structures.standard_inchi_key"] = typed["molecule_structures.standard_inchi_key"].fillna("")
 
     chirality_reference = int(
         config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
@@ -75,14 +74,15 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         typed.get("nstereo", pd.Series([], dtype="Int64")), chirality_reference
     )
 
-    aggregates = _aggregate_testitem(activity_df)
-    enriched = typed.merge(
-        aggregates,
-        on="document_chembl_id",
-        how="left",
-    )
+    enriched = typed
+#    aggregates = _aggregate_testitem(activity_df)
+#    enriched = typed.merge(
+#        aggregates,
+#        on="molecule_chembl_id",
+#        how="left",
+#    )
     enriched["document_testitem_total"] = (
-        enriched["document_testitem_total"].fillna(0).astype("Int64")
+         enriched["document_testitem_total"].fillna(0).astype("string")
     )
 
     invalid_rules = (
@@ -96,7 +96,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     def _compute_invalid(row: pd.Series) -> bool:
         molecule_type = str(row.get("molecule_type", "")).lower()
         structure_type = str(row.get("structure_type", "")).lower()
-        inchi_key = to_text(row.get("standard_inchi_key", ""))
+        inchi_key = to_text(row.get("molecule_structures.standard_inchi_key", ""))
         return not (
             molecule_type == molecule_type_expected
             and structure_type == structure_type_expected
