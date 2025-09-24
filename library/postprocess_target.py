@@ -14,13 +14,27 @@ logger = logging.getLogger(__name__)
 
 
 EC_MAJOR_CLASS_MAP: dict[str, Tuple[str, str, Optional[str]]] = {
-    "1": ("Enzyme", "Oxidoreductase", None),
-    "2": ("Enzyme", "Transferase", None),
-    "3": ("Enzyme", "Hydrolase", None),
-    "4": ("Enzyme", "Lyase", None),
-    "5": ("Enzyme", "Isomerase", None),
-    "6": ("Enzyme", "Ligase", None),
+    "1": ("Enzyme", "Oxidoreductase", "Oxidoreductase"),
+    "2": ("Enzyme", "Transferase", "Kinase"),
+    "3": ("Enzyme", "Hydrolase", "Protease"),
+    "4": ("Enzyme", "Lyase", "Lyase"),
+    "5": ("Enzyme", "Isomerase", "Isomerase"),
+    "6": ("Enzyme", "Ligase", "Ligase"),
 }
+
+EC_MAJOR_FALLBACK: Tuple[str, str, Optional[str]] = (
+    "Other Protein Target",
+    "Other Protein Target",
+    None,
+)
+
+EC_MULTIFUNCTIONAL_CLASS: Tuple[str, str, Optional[str]] = (
+    "Enzyme",
+    "Multifunctional",
+    "Multifunctional",
+)
+
+EC_FALLBACK_CONFIDENCE = "0.5"
 
 UNICELLULAR_PHYLA: set[str] = {
     "ciliophora",
@@ -85,6 +99,135 @@ COMPONENT_DESCRIPTION_PATTERN = re.compile(
     r"\"component_description\"\s*:\s*\"([^\"]+)\"",
     flags=re.IGNORECASE,
 )
+
+PROTEIN_CLASSIFICATION_PATTERN = re.compile(
+    r"protein_classification\"\s*:\s*\"([^\"]+)\"",
+    flags=re.IGNORECASE,
+)
+
+CLASS_LABEL_MAP: dict[str, str] = {
+    "enzyme": "Enzyme",
+    "oxidoreductase": "Oxidoreductase",
+    "hydrolase": "Hydrolase",
+    "transferase": "Transferase",
+    "ligase": "Ligase",
+    "lyase": "Lyase",
+    "isomerase": "Isomerase",
+    "kinase": "Kinase",
+    "protease": "Protease",
+    "multifunctional": "Multifunctional",
+    "ion channel": "Ion Channel",
+    "voltage-gated ion channel": "Voltage-gated ion channel",
+    "voltage-gated": "Voltage-gated",
+    "ligand-gated ion channel": "Ligand-gated ion channel",
+    "ligand-gated": "Ligand-gated",
+    "transporter": "Transporter",
+    "atpase": "ATPase",
+    "atp-binding cassette transporter": "ATP-binding cassette transporter",
+    "slc superfamily of solute carrier": "SLC superfamily of solute carrier",
+    "receptor": "Receptor",
+    "g protein-coupled receptor": "G protein-coupled receptor",
+    "transcription factor": "Transcription factor",
+    "tf: other": "TF: Other",
+    "zinc finger": "Zinc finger",
+    "other protein target": "Other Protein Target",
+}
+
+IUPHAR_TYPE_OVERRIDES: dict[str, Tuple[str, str, Optional[str]]] = {
+    "enzyme.multifunctional": ("Enzyme", "Multifunctional", None),
+    "enzyme.oxidoreductase": ("Enzyme", "Oxidoreductase", None),
+    "enzyme.hydrolase": ("Enzyme", "Hydrolase", None),
+    "enzyme.transferase": ("Enzyme", "Transferase", None),
+    "enzyme.isomerase": ("Enzyme", "Isomerase", None),
+    "enzyme.ligase": ("Enzyme", "Ligase", None),
+    "enzyme.lyase": ("Enzyme", "Lyase", None),
+    "transporter.atpase": ("Transporter", "ATPase", None),
+    "transporter.atp-binding cassette transporter": (
+        "Transporter",
+        "ATP-binding cassette transporter",
+        None,
+    ),
+    "transporter.slc superfamily of solute carrier": (
+        "Transporter",
+        "SLC superfamily of solute carrier",
+        None,
+    ),
+    "ion channel.voltage-gated ion channel": (
+        "Ion Channel",
+        "Voltage-gated ion channel",
+        None,
+    ),
+    "ion channel.ligand-gated ion channel": (
+        "Ion Channel",
+        "Ligand-gated ion channel",
+        None,
+    ),
+    "receptor.g protein-coupled receptor": (
+        "Receptor",
+        "G protein-coupled receptor",
+        None,
+    ),
+    "other protein target.other protein target": (
+        "Other Protein Target",
+        "Other Protein Target",
+        None,
+    ),
+}
+
+IUPHAR_TYPE_CHAIN_OVERRIDES: dict[
+    Tuple[str, str], Tuple[str, str, Optional[str]]
+] = {
+    ("receptor.nuclear hormone receptor", "zinc finger"): (
+        "Transcription factor",
+        "Zinc finger",
+        None,
+    ),
+}
+
+IUPHAR_PAIR_OVERRIDES: dict[
+    Tuple[str, str], Tuple[str, str, Optional[str]]
+] = {
+    ("receptor", "nuclear hormone receptor"): (
+        "Transcription factor",
+        "TF: Other",
+        None,
+    ),
+    ("ion channel", "voltage-gated ion channel"): (
+        "Ion Channel",
+        "Voltage-gated ion channel",
+        None,
+    ),
+    ("ion channel", "ligand-gated ion channel"): (
+        "Ion Channel",
+        "Ligand-gated ion channel",
+        None,
+    ),
+    ("transporter", "atp-binding cassette transporter"): (
+        "Transporter",
+        "ATP-binding cassette transporter",
+        None,
+    ),
+    ("transporter", "slc superfamily of solute carrier"): (
+        "Transporter",
+        "SLC superfamily of solute carrier",
+        None,
+    ),
+    ("transporter", "atpase"): (
+        "Transporter",
+        "ATPase",
+        None,
+    ),
+    ("other protein target", "other protein target"): (
+        "Other Protein Target",
+        "Other Protein Target",
+        None,
+    ),
+    ("receptor", "g protein-coupled receptor"): (
+        "Receptor",
+        "G protein-coupled receptor",
+        None,
+    ),
+}
 
 
 def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
@@ -230,64 +373,76 @@ def _enrich_protein_class_predictions(df: pd.DataFrame) -> pd.DataFrame:
         "protein_class_pred_L3",
     )
 
-    for column in class_columns:
-        if column not in result.columns:
-            result[column] = pd.NA
 
-    for column in (
+    meta_columns = (
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
         "protein_class_pred_confidence",
-    ):
+    )
+
+    for column in (*class_columns, *meta_columns):
         if column not in result.columns:
             result[column] = pd.NA
 
+    def _select_prediction(row: pd.Series) -> Optional[Dict[str, Any]]:
+        candidates = [
+            _infer_from_iuphar(row),
+            _infer_from_protein_classifications(row),
+            _infer_from_ec_numbers(row),
+        ]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            has_class = any(
+                not _is_empty(candidate.get(column)) for column in class_columns
+            )
+            if has_class:
+                return candidate
+        return None
+
     def _update_row(row: pd.Series) -> pd.Series:
-        current_classes = [row.get(column) for column in class_columns]
-        needs_update = any(_is_empty(value) for value in current_classes)
-
-        if needs_update:
-            inference = _infer_from_iuphar(row)
-            if inference is None:
-                inference = _infer_from_ec_numbers(row)
-        else:
-            inference = None
-
-        if inference is None:
+        prediction = _select_prediction(row)
+        if prediction is None:
             return row
 
-        (l1, l2, l3, rule_id, evidence, confidence) = inference
         updated = False
 
-        for column, value in zip(class_columns, (l1, l2, l3)):
+        for column in class_columns:
+            value = prediction.get(column)
+
             if _is_empty(row.get(column)) and not _is_empty(value):
                 row[column] = value
                 updated = True
 
-        if updated:
-            if _is_empty(row.get("protein_class_pred_rule_id")) and rule_id:
-                row["protein_class_pred_rule_id"] = rule_id
-            if _is_empty(row.get("protein_class_pred_evidence")) and evidence:
-                row["protein_class_pred_evidence"] = evidence
-            if _is_empty(row.get("protein_class_pred_confidence")) and confidence:
-                row["protein_class_pred_confidence"] = confidence
+        metadata_needed = any(_is_empty(row.get(column)) for column in meta_columns)
+
+        if updated or metadata_needed:
+            for column in meta_columns:
+                value = prediction.get(column)
+                if _is_empty(row.get(column)) and not _is_empty(value):
+                    row[column] = value
+
 
         return row
 
     return result.apply(_update_row, axis=1)
 
 
-def _infer_from_iuphar(row: pd.Series) -> Optional[Tuple[str, str, Optional[str], str, str, str]]:
+
+def _infer_from_iuphar(row: pd.Series) -> Optional[Dict[str, Any]]:
+    prediction = _infer_from_iuphar_type(row)
+    if prediction:
+        return prediction
+
+    prediction = _infer_from_iuphar_class(row)
+    if prediction:
+        return prediction
+
+    return _infer_from_iuphar_path(row)
+
+
+def _infer_from_iuphar_type(row: pd.Series) -> Optional[Dict[str, Any]]:
     tokens = _tokenize_class_string(row.get("iuphar_type"))
-    evidence = "iuphar_type" if tokens else ""
-
-    if not tokens:
-        tokens = _tokenize_class_string(row.get("iuphar_class"))
-        evidence = "iuphar_class" if tokens else evidence
-
-    if not tokens:
-        tokens = _tokenize_class_string(row.get("iuphar_full_name_path"))
-        evidence = "iuphar_full_name_path" if tokens else evidence
 
     if not tokens:
         return None
@@ -296,47 +451,236 @@ def _infer_from_iuphar(row: pd.Series) -> Optional[Tuple[str, str, Optional[str]
     l2 = tokens[1] if len(tokens) > 1 else row.get("iuphar_subclass")
     l3 = tokens[2] if len(tokens) > 2 else row.get("iuphar_chain")
 
-    return (
-        _normalize_class_value(l1),
-        _normalize_class_value(l2),
-        _normalize_class_value(l3),
-        "IUPHAR_TYPE" if evidence == "iuphar_type" else "IUPHAR_INFERRED",
-        evidence,
-        "1.0",
+    return _finalize_iuphar_prediction(
+        l1,
+        l2,
+        l3,
+        row,
+        rule_id="IUPHAR_TYPE",
+        evidence="iuphar_type",
+        confidence="1.0",
     )
 
 
-def _infer_from_ec_numbers(row: pd.Series) -> Optional[Tuple[str, str, Optional[str], str, str, str]]:
+def _infer_from_iuphar_class(row: pd.Series) -> Optional[Dict[str, Any]]:
+    l1 = row.get("iuphar_class")
+    l2 = row.get("iuphar_subclass")
+    l3 = row.get("iuphar_chain")
+
+    if _is_empty(l1) and _is_empty(l2) and _is_empty(l3):
+        return None
+
+    return _finalize_iuphar_prediction(
+        l1,
+        l2,
+        l3,
+        row,
+        rule_id="IUPHAR_CLASS",
+        evidence="iuphar_class",
+        confidence="0.9",
+    )
+
+
+def _infer_from_iuphar_path(row: pd.Series) -> Optional[Dict[str, Any]]:
+    tokens = _tokenize_class_string(row.get("iuphar_full_name_path"))
+    if not tokens:
+        return None
+
+    l1 = tokens[0] if tokens else None
+    l2 = tokens[1] if len(tokens) > 1 else None
+    l3 = tokens[2] if len(tokens) > 2 else None
+
+    return _finalize_iuphar_prediction(
+        l1,
+        l2,
+        l3,
+        row,
+        rule_id="IUPHAR_PATH",
+        evidence="iuphar_full_name_path",
+        confidence="0.8",
+    )
+
+
+def _infer_from_protein_classifications(row: pd.Series) -> Optional[Dict[str, Any]]:
+    tokens = PROTEIN_CLASSIFICATION_PATTERN.findall(_to_text(row.get("protein_classifications")))
+    cleaned = [token for token in (_format_label(token) for token in tokens) if token]
+
+    if not cleaned:
+        return None
+
+    while len(cleaned) < 3:
+        cleaned.append(None)
+
+    l1, l2, l3 = cleaned[:3]
+
+    return _build_prediction(
+        l1,
+        l2,
+        l3,
+        rule_id="PROTEIN_CLASSIFICATION",
+        evidence="protein_classifications",
+        confidence="0.7",
+    )
+
+
+def _infer_from_ec_numbers(row: pd.Series) -> Optional[Dict[str, Any]]:
+    family_key = _normalize_key(row.get("iuphar_family_id"))
+    if family_key:
+        return None
+
+    cellularity = _normalize_key(row.get("cellularity"))
+    if cellularity and cellularity != "multicellular":
+        return None
+
     ec_numbers = row.get("reaction_ec_numbers")
-    majors = _extract_ec_majors(ec_numbers)
+    raw_majors = _extract_ec_majors(ec_numbers)
+    majors = [major for major in raw_majors if major and major != "3"]
+
 
     if not majors:
         return None
 
     if len(majors) > 1:
-        return (
-            "Enzyme",
-            "Multifunctional",
-            None,
-            "EC_MAJOR_MULTI",
-            "reaction_ec_numbers",
-            "0.6",
+
+        l1, l2, l3 = EC_MULTIFUNCTIONAL_CLASS
+        return _build_prediction(
+            l1,
+            l2,
+            l3,
+            rule_id="EC_MAJOR_MULTI",
+            evidence="reaction_ec_numbers",
+            confidence="0.6",
         )
 
     major = majors[0]
     mapping = EC_MAJOR_CLASS_MAP.get(major)
-    if not mapping:
-        return None
+    if mapping is None:
+        l1, l2, l3 = EC_MAJOR_FALLBACK
+        return _build_prediction(
+            l1,
+            l2,
+            l3,
+            rule_id="EC_MAJOR_FALLBACK",
+            evidence="reaction_ec_numbers",
+            confidence=EC_FALLBACK_CONFIDENCE,
+        )
 
     l1, l2, l3 = mapping
-    return (
+    return _build_prediction(
         l1,
         l2,
         l3,
-        "EC_MAJOR",
-        "reaction_ec_numbers",
-        "0.6",
+        rule_id="EC_MAJOR",
+        evidence="reaction_ec_numbers",
+        confidence="0.6",
     )
+
+
+def _finalize_iuphar_prediction(
+    l1: Any,
+    l2: Any,
+    l3: Any,
+    row: pd.Series,
+    *,
+    rule_id: str,
+    evidence: str,
+    confidence: str,
+) -> Optional[Dict[str, Any]]:
+    type_key = _normalize_key(row.get("iuphar_type"))
+    class_key = _normalize_key(row.get("iuphar_class"))
+    subclass_key = _normalize_key(row.get("iuphar_subclass"))
+    chain_key = _normalize_key(row.get("iuphar_chain"))
+
+    resolved = _normalize_prediction_labels(
+        l1,
+        l2,
+        l3,
+        type_key=type_key,
+        class_key=class_key,
+        subclass_key=subclass_key,
+        chain_key=chain_key,
+    )
+
+    if resolved is None:
+        return None
+
+    norm_l1, norm_l2, norm_l3 = resolved
+
+    if _is_empty(norm_l1) and _is_empty(norm_l2) and _is_empty(norm_l3):
+        return None
+
+    return _build_prediction(
+        norm_l1,
+        norm_l2,
+        norm_l3,
+        rule_id=rule_id,
+        evidence=evidence,
+        confidence=confidence,
+    )
+
+
+def _normalize_prediction_labels(
+    l1: Any,
+    l2: Any,
+    l3: Any,
+    *,
+    type_key: str,
+    class_key: str,
+    subclass_key: str,
+    chain_key: str,
+) -> Optional[Tuple[Optional[str], Optional[str], Optional[str]]]:
+    norm_l1 = _format_label(l1)
+    norm_l2 = _format_label(l2)
+    norm_l3 = _format_label(l3)
+
+    if type_key and chain_key and (type_key, chain_key) in IUPHAR_TYPE_CHAIN_OVERRIDES:
+        override = IUPHAR_TYPE_CHAIN_OVERRIDES[(type_key, chain_key)]
+        norm_l1, norm_l2, norm_l3 = override
+    elif type_key and type_key in IUPHAR_TYPE_OVERRIDES:
+        override = IUPHAR_TYPE_OVERRIDES[type_key]
+        norm_l1, norm_l2, norm_l3 = override
+    else:
+        pair = (
+            (norm_l1 or "").lower(),
+            (norm_l2 or "").lower(),
+        )
+        if pair in IUPHAR_PAIR_OVERRIDES:
+            override = IUPHAR_PAIR_OVERRIDES[pair]
+            norm_l1, norm_l2, norm_l3 = override
+        else:
+            class_pair = (class_key, subclass_key)
+            formatted_pair = (
+                _format_label(class_pair[0]) or "",
+                _format_label(class_pair[1]) or "",
+            )
+            if formatted_pair in IUPHAR_PAIR_OVERRIDES:
+                override = IUPHAR_PAIR_OVERRIDES[formatted_pair]
+                norm_l1, norm_l2, norm_l3 = override
+
+    if not norm_l3 and chain_key not in {"", "n/a", "na"}:
+        norm_l3 = _format_label(chain_key)
+
+    return (norm_l1, norm_l2, norm_l3)
+
+
+def _build_prediction(
+    l1: Optional[str],
+    l2: Optional[str],
+    l3: Optional[str],
+    *,
+    rule_id: str,
+    evidence: str,
+    confidence: str,
+) -> Dict[str, Any]:
+    return {
+        "protein_class_pred_L1": l1,
+        "protein_class_pred_L2": l2,
+        "protein_class_pred_L3": l3,
+        "protein_class_pred_rule_id": rule_id,
+        "protein_class_pred_evidence": evidence,
+        "protein_class_pred_confidence": confidence,
+    }
+
 
 
 def _combine_synonyms(row: pd.Series, columns: Sequence[str]) -> str:
@@ -485,9 +829,31 @@ def _normalize_lower(value: Optional[str]) -> Optional[str]:
     return text.lower()
 
 
-def _normalize_class_value(value: Any) -> Optional[str]:
+def _format_label(value: Any) -> Optional[str]:
     text = _to_text(value)
-    return text if text else None
+    if not text:
+        return None
+
+    lowered = text.lower()
+    if lowered in {"n/a", "na"}:
+        return None
+
+    if lowered in CLASS_LABEL_MAP:
+        return CLASS_LABEL_MAP[lowered]
+
+    if ":" in text:
+        prefix, suffix = [segment.strip() for segment in text.split(":", 1)]
+        if suffix:
+            normalized_suffix = CLASS_LABEL_MAP.get(suffix.lower(), suffix)
+            if prefix.lower() in CLASS_LABEL_MAP:
+                return normalized_suffix
+
+    return text
+
+
+def _normalize_class_value(value: Any) -> Optional[str]:
+    return _format_label(value)
+
 
 
 def _is_empty(value: Any) -> bool:
@@ -503,6 +869,14 @@ def _is_empty(value: Any) -> bool:
 def _normalize_taxon_value(value: Any) -> str:
     text = _to_text(value)
     return text.lower()
+
+
+
+def _normalize_key(value: Any) -> str:
+    lowered = _to_text(value).lower()
+    if lowered in {"n/a", "na"}:
+        return ""
+    return lowered
 
 
 def _to_text(value: Any) -> str:
