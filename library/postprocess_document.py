@@ -19,8 +19,37 @@ def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
         "document_chembl_id": "string",
         "is_citation": "boolean",
     }
-    typed = coerce_types(activity, schema)
-    return typed
+    if activity.empty:
+        return pd.DataFrame(columns=schema.keys()).astype(
+            {
+                "activity_chembl_id": "Int64",
+                "assay_chembl_id": "string",
+                "molecule_chembl_id": "string",
+                "document_chembl_id": "string",
+                "is_citation": "boolean",
+            }
+        )
+
+    prepared = activity.copy()
+
+    rename_map = {}
+    if "activity_chembl_id" not in prepared.columns:
+        for candidate in ("activity_id", "ACTIVITY_ID"):
+            if candidate in prepared.columns:
+                rename_map[candidate] = "activity_chembl_id"
+                break
+    if rename_map:
+        prepared = prepared.rename(columns=rename_map)
+
+    for column, dtype in schema.items():
+        if column not in prepared.columns:
+            if dtype == "boolean":
+                prepared[column] = False
+            else:
+                prepared[column] = pd.NA
+
+    typed = coerce_types(prepared, schema)
+    return typed[list(schema.keys())]
 
 
 def _aggregate_activity(
