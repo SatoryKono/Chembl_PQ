@@ -8,12 +8,12 @@ source:
     auth: env
 
 files:
-  document_csv: "data/input/document.csv"
-  activity_csv: "data/input/activity.csv"
+  document_csv: "data\input\output.document_20250924.csv"
+  activity_csv: "data\input\output.activity_20250924.csv"
   citation_fraction_csv: "dictionary/_curation/citation_fraction.csv"
-  testitem_csv: "data/input/testitem.csv"
-  assay_csv: "data/input/assay.csv"
-  target_csv: "data/input/target.csv"
+  testitem_csv: "data\input\output.testitem_20250924.csv"
+  assay_csv: "data\input\output.assay_20250924.csv"
+  target_csv: "data\input\output.target_20250924.csv"
 
 io:
   encoding_in: utf8
