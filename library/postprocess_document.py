@@ -6,21 +6,44 @@ from typing import Dict
 import pandas as pd
 
 from .transforms import clean_pipe, to_text
-from .utils import coerce_types, finalize_aggregate_columns
+from .utils import coerce_types, ensure_columns, finalize_aggregate_columns
 
 logger = logging.getLogger(__name__)
 
 
+ACTIVITY_SCHEMA = {
+    "activity_chembl_id": "Int64",
+    "assay_chembl_id": "string",
+    "molecule_chembl_id": "string",
+    "document_chembl_id": "string",
+    "is_citation": "boolean",
+}
+
+
 def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
-    schema = {
-        "activity_chembl_id": "Int64",
-        "assay_chembl_id": "string",
-        "molecule_chembl_id": "string",
-        "document_chembl_id": "string",
-        "is_citation": "boolean",
-    }
-    typed = coerce_types(activity, schema)
-    return typed
+    if activity.empty:
+        return pd.DataFrame(columns=ACTIVITY_SCHEMA.keys()).astype(ACTIVITY_SCHEMA)
+
+    prepared = activity.copy()
+
+    rename_map = {}
+    if "activity_chembl_id" not in prepared.columns:
+        for candidate in ("activity_id", "ACTIVITY_ID"):
+            if candidate in prepared.columns:
+                rename_map[candidate] = "activity_chembl_id"
+                break
+    if rename_map:
+        prepared = prepared.rename(columns=rename_map)
+
+    for column, dtype in ACTIVITY_SCHEMA.items():
+        if column not in prepared.columns:
+            if dtype == "boolean":
+                prepared[column] = False
+            else:
+                prepared[column] = pd.NA
+
+    typed = coerce_types(prepared, ACTIVITY_SCHEMA)
+    return typed[list(ACTIVITY_SCHEMA.keys())]
 
 
 def _aggregate_activity(
@@ -50,7 +73,15 @@ def _aggregate_activity(
             }
         )
 
-    activity = activity.copy()
+    required_columns = [
+        "document_chembl_id",
+        "activity_chembl_id",
+        "is_citation",
+        "assay_chembl_id",
+        "molecule_chembl_id",
+    ]
+    activity = ensure_columns(activity.copy(), required_columns, ACTIVITY_SCHEMA)
+    activity = coerce_types(activity, ACTIVITY_SCHEMA)
     activity = activity[activity["document_chembl_id"].notna()]
 
     grouped = (
