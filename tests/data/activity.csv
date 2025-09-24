@@ -1,0 +1,4 @@
+activity_chembl_id,assay_chembl_id,molecule_chembl_id,document_chembl_id,is_citation
+1,A1,M1,DOC1,true
+2,A2,M2,DOC1,false
+3,A3,M3,DOC2,true
