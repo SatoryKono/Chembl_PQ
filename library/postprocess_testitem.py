@@ -58,6 +58,11 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     }
     typed = coerce_types(testitem_df, base_schema)
 
+    if "document_chembl_id" not in typed.columns:
+        typed["document_chembl_id"] = pd.Series(
+            pd.NA, index=typed.index, dtype="string"
+        )
+
     if "all_names" in typed.columns:
         typed["all_names"] = typed["all_names"].fillna("")
     if "standard_inchi_key" in typed.columns:
