@@ -7,7 +7,7 @@ import pandas as pd
 
 from .postprocess_document import _prepare_activity
 from .transforms import to_text
-from .utils import coerce_types, finalize_aggregate_columns
+from .utils import coerce_types, finalize_aggregate_columns, safe_merge
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +74,21 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         typed.get("nstereo", pd.Series([], dtype="Int64")), chirality_reference
     )
 
-    enriched = typed
-#    aggregates = _aggregate_testitem(activity_df)
-#    enriched = typed.merge(
-#        aggregates,
-#        on="molecule_chembl_id",
-#        how="left",
-#    )
+    aggregates = _aggregate_testitem(activity_df)
+    enriched = safe_merge(
+        typed,
+        aggregates,
+        on=["document_chembl_id"],
+        how="left",
+    )
+
+    if "document_testitem_total" not in enriched.columns:
+        enriched["document_testitem_total"] = 0
+
     enriched["document_testitem_total"] = (
-         enriched["document_testitem_total"].fillna(0).astype("string")
+        pd.to_numeric(enriched["document_testitem_total"], errors="coerce")
+        .fillna(0)
+        .astype("Int64")
     )
 
     invalid_rules = (
