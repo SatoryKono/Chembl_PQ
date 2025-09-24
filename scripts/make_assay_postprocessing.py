@@ -2,31 +2,18 @@ from __future__ import annotations
 
 import argparse
 import logging
-
 import sys
-
 from pathlib import Path
-from typing import Dict
-
-import yaml
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-
-
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
-def _load_config(path: Path) -> Dict[str, object]:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
 def main() -> None:
-
+    from library.config import load_config
     from library.loaders import read_csv, write_csv
     from library.postprocess_assay import run as run_assay
 
@@ -36,7 +23,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config_path = Path(args.config)
-    config = _load_config(config_path)
+    config = load_config(config_path)
 
     assay_df = read_csv("assay_csv", config)
     activity_df = read_csv("activity_csv", config)
