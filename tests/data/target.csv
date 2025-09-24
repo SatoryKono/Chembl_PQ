@@ -2,3 +2,4 @@ target_chembl_id,uniprot_id_primary,recommended_name,recommendedName,pref_name,p
 T1,P12345,,Protein Alpha,Alpha Pref,Alpha Canonical,[AltAlpha|Alt A],,GENE1,[GA|Gene1],"[{""component_description"": ""Subunit Alpha""}]",,,,,,,,9606,Eukaryota,Chordata,Mammalia,2.7.11.1,,,IUPHAR A,GT1,GF1,Enzyme.Transferase,Enzyme,Transferase,Kinase,pathA,nameA
 T2,P67890,Existing Beta,Protein Beta,Beta Pref,Beta Canonical,,BetaGene,GENE2,,,,,,,,,,10090,Eukaryota,Streptophyta,,1.1.1.1|2.7.11.1,,,,,,,,,,,
 T3,P11111,Gamma Receptor,,,Gamma canonical,[Gamma alt],,GammaGene,[GG|GG1],"[{""component_description"": ""Gamma subunit""}]",,,,,,,,9606,Eukaryota,Chordata,Mammalia,,,,IUPHAR G,GT3,GF3,Receptor.Nuclear Hormone Receptor,Receptor,Nuclear Hormone Receptor,Zinc finger,pathG,nameG
+

@@ -6,29 +6,23 @@ from typing import Dict
 import pandas as pd
 
 from .transforms import clean_pipe, to_text
-from .utils import coerce_types, finalize_aggregate_columns
+from .utils import coerce_types, ensure_columns, finalize_aggregate_columns
 
 logger = logging.getLogger(__name__)
 
 
+ACTIVITY_SCHEMA = {
+    "activity_chembl_id": "Int64",
+    "assay_chembl_id": "string",
+    "molecule_chembl_id": "string",
+    "document_chembl_id": "string",
+    "is_citation": "boolean",
+}
+
+
 def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
-    schema = {
-        "activity_chembl_id": "Int64",
-        "assay_chembl_id": "string",
-        "molecule_chembl_id": "string",
-        "document_chembl_id": "string",
-        "is_citation": "boolean",
-    }
     if activity.empty:
-        return pd.DataFrame(columns=schema.keys()).astype(
-            {
-                "activity_chembl_id": "Int64",
-                "assay_chembl_id": "string",
-                "molecule_chembl_id": "string",
-                "document_chembl_id": "string",
-                "is_citation": "boolean",
-            }
-        )
+        return pd.DataFrame(columns=ACTIVITY_SCHEMA.keys()).astype(ACTIVITY_SCHEMA)
 
     prepared = activity.copy()
 
@@ -41,15 +35,15 @@ def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
     if rename_map:
         prepared = prepared.rename(columns=rename_map)
 
-    for column, dtype in schema.items():
+    for column, dtype in ACTIVITY_SCHEMA.items():
         if column not in prepared.columns:
             if dtype == "boolean":
                 prepared[column] = False
             else:
                 prepared[column] = pd.NA
 
-    typed = coerce_types(prepared, schema)
-    return typed[list(schema.keys())]
+    typed = coerce_types(prepared, ACTIVITY_SCHEMA)
+    return typed[list(ACTIVITY_SCHEMA.keys())]
 
 
 def _aggregate_activity(
@@ -79,7 +73,15 @@ def _aggregate_activity(
             }
         )
 
-    activity = activity.copy()
+    required_columns = [
+        "document_chembl_id",
+        "activity_chembl_id",
+        "is_citation",
+        "assay_chembl_id",
+        "molecule_chembl_id",
+    ]
+    activity = ensure_columns(activity.copy(), required_columns, ACTIVITY_SCHEMA)
+    activity = coerce_types(activity, ACTIVITY_SCHEMA)
     activity = activity[activity["document_chembl_id"].notna()]
 
     grouped = (
@@ -226,10 +228,25 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "K_min_significant" in normalized.columns:
         normalized = normalized.drop(columns=["K_min_significant"])
 
-    column_types = config.get("pipeline", {}).get("document", {}).get("type_map", {})
+    document_cfg = config.get("pipeline", {}).get("document", {})
+    column_types = document_cfg.get("type_map", {})
+
+    required_columns: list[str] = []
+    if column_types:
+        required_columns.extend(column_types.keys())
+
+    column_order = document_cfg.get("column_order", [])
+    if column_order:
+        required_columns.extend(column_order)
+
+    if required_columns:
+        # Deduplicate while preserving the first occurrence order.
+        ordered_unique = list(dict.fromkeys(required_columns))
+        normalized = ensure_columns(normalized, ordered_unique, column_types)
+
     typed = coerce_types(normalized, column_types)
 
-    formatters = config.get("pipeline", {}).get("document", {}).get("formatters", {})
+    formatters = document_cfg.get("formatters", {})
     zero_pad = formatters.get("zero_pad", {})
     for column, width in zero_pad.items():
         if column in typed.columns:
@@ -245,9 +262,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
                 .astype("string")
             )
 
-    column_order = (
-        config.get("pipeline", {}).get("document", {}).get("column_order", [])
-    )
+    column_order = document_cfg.get("column_order", [])
     if column_order:
         missing = [col for col in column_order if col not in typed.columns]
         if missing:

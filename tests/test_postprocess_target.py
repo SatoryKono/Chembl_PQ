@@ -12,6 +12,7 @@ def test_target_postprocess(target_inputs, test_config) -> None:
 
     expected = pd.DataFrame(
         {
+
             "target_chembl_id": ["T1", "T2", "T3"],
             "uniprot_id_primary": ["P12345", "P67890", "P11111"],
             "recommended_name": [
@@ -71,6 +72,7 @@ def test_target_postprocess(target_inputs, test_config) -> None:
             "iuphar_chain": ["Kinase", pd.NA, "Zinc finger"],
             "iuphar_full_id_path": ["pathA", pd.NA, "pathG"],
             "iuphar_full_name_path": ["nameA", pd.NA, "nameG"],
+
         }
     )
 
@@ -100,6 +102,7 @@ def test_target_postprocess_missing_columns(test_config) -> None:
     expected.loc[0, "reaction_ec_numbers"] = ""
     expected.loc[0, "cellularity"] = "ambiguous"
     expected.loc[0, "multifunctional_enzyme"] = "false"
+
 
     type_map = test_config["pipeline"]["target"]["type_map"]
     expected = coerce_types(expected, type_map)
@@ -155,6 +158,7 @@ def test_target_protein_classification_fallback(test_config) -> None:
             "iuphar_full_name_path": [pd.NA],
         }
     )
+
 
     type_map = test_config["pipeline"]["target"]["type_map"]
     expected = coerce_types(expected, type_map)

@@ -373,6 +373,7 @@ def _enrich_protein_class_predictions(df: pd.DataFrame) -> pd.DataFrame:
         "protein_class_pred_L3",
     )
 
+
     meta_columns = (
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
@@ -408,6 +409,7 @@ def _enrich_protein_class_predictions(df: pd.DataFrame) -> pd.DataFrame:
 
         for column in class_columns:
             value = prediction.get(column)
+
             if _is_empty(row.get(column)) and not _is_empty(value):
                 row[column] = value
                 updated = True
@@ -420,9 +422,11 @@ def _enrich_protein_class_predictions(df: pd.DataFrame) -> pd.DataFrame:
                 if _is_empty(row.get(column)) and not _is_empty(value):
                     row[column] = value
 
+
         return row
 
     return result.apply(_update_row, axis=1)
+
 
 
 def _infer_from_iuphar(row: pd.Series) -> Optional[Dict[str, Any]]:
@@ -439,6 +443,7 @@ def _infer_from_iuphar(row: pd.Series) -> Optional[Dict[str, Any]]:
 
 def _infer_from_iuphar_type(row: pd.Series) -> Optional[Dict[str, Any]]:
     tokens = _tokenize_class_string(row.get("iuphar_type"))
+
     if not tokens:
         return None
 
@@ -531,10 +536,12 @@ def _infer_from_ec_numbers(row: pd.Series) -> Optional[Dict[str, Any]]:
     raw_majors = _extract_ec_majors(ec_numbers)
     majors = [major for major in raw_majors if major and major != "3"]
 
+
     if not majors:
         return None
 
     if len(majors) > 1:
+
         l1, l2, l3 = EC_MULTIFUNCTIONAL_CLASS
         return _build_prediction(
             l1,
@@ -673,6 +680,7 @@ def _build_prediction(
         "protein_class_pred_evidence": evidence,
         "protein_class_pred_confidence": confidence,
     }
+
 
 
 def _combine_synonyms(row: pd.Series, columns: Sequence[str]) -> str:
@@ -847,6 +855,7 @@ def _normalize_class_value(value: Any) -> Optional[str]:
     return _format_label(value)
 
 
+
 def _is_empty(value: Any) -> bool:
     if value is None or value is pd.NA:
         return True
@@ -860,6 +869,7 @@ def _is_empty(value: Any) -> bool:
 def _normalize_taxon_value(value: Any) -> str:
     text = _to_text(value)
     return text.lower()
+
 
 
 def _normalize_key(value: Any) -> str:
