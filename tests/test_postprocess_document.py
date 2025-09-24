@@ -48,3 +48,25 @@ def test_document_postprocess(document_inputs, test_config) -> None:
     expected = coerce_types(expected, type_map)
 
     pdt.assert_frame_equal(result, expected)
+
+
+def test_document_postprocess_backfills_missing_columns(
+    document_inputs, test_config
+) -> None:
+    minimal_document = document_inputs["document"][
+        ["ChEMBL.document_chembl_id"]
+    ].copy()
+    inputs = {
+        "document": minimal_document,
+        "activity": document_inputs["activity"],
+        "citation_fraction": document_inputs["citation_fraction"],
+    }
+
+    result = run(inputs, test_config)
+
+    column_order = test_config["pipeline"]["document"]["column_order"]
+    assert list(result.columns) == column_order
+
+    type_map = test_config["pipeline"]["document"]["type_map"]
+    expected = coerce_types(result, type_map)
+    pdt.assert_frame_equal(result, expected)
