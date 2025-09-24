@@ -62,10 +62,14 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             pd.NA, index=typed.index, dtype="string"
         )
 
-    if "all_names" in typed.columns:
-        typed["all_names"] = typed["all_names"].fillna("")
-    if "molecule_structures.standard_inchi_key" in typed.columns:
-        typed["molecule_structures.standard_inchi_key"] = typed["molecule_structures.standard_inchi_key"].fillna("")
+    fillable_columns = [
+        "all_names",
+        "molecule_structures.standard_inchi_key",
+        "standard_inchi_key",
+    ]
+    for column in fillable_columns:
+        if column in typed.columns:
+            typed[column] = typed[column].fillna("")
 
     chirality_reference = int(
         config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
@@ -82,11 +86,12 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         how="left",
     )
 
-    if "document_testitem_total" not in enriched.columns:
-        enriched["document_testitem_total"] = 0
-
+    default_total = pd.Series(0, index=enriched.index, dtype="Int64")
     enriched["document_testitem_total"] = (
-        pd.to_numeric(enriched["document_testitem_total"], errors="coerce")
+        pd.to_numeric(
+            enriched.get("document_testitem_total", default_total),
+            errors="coerce",
+        )
         .fillna(0)
         .astype("Int64")
     )
@@ -102,7 +107,12 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     def _compute_invalid(row: pd.Series) -> bool:
         molecule_type = str(row.get("molecule_type", "")).lower()
         structure_type = str(row.get("structure_type", "")).lower()
-        inchi_key = to_text(row.get("molecule_structures.standard_inchi_key", ""))
+        inchi_key = to_text(
+            row.get(
+                "molecule_structures.standard_inchi_key",
+                row.get("standard_inchi_key", ""),
+            )
+        )
         return not (
             molecule_type == molecule_type_expected
             and structure_type == structure_type_expected
