@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, Optional
 
 import pandas as pd
 
-from .transforms import clean_pipe, to_text
+from .transforms import clean_pipe, normalize_whitespace, to_text
 from .utils import coerce_types, ensure_columns
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,91 @@ PMID_SOURCES: tuple[str, ...] = (
 )
 
 
+DOI_PREFIXES: tuple[str, ...] = (
+    "https://doi.org/",
+    "http://doi.org/",
+    "https://dx.doi.org/",
+    "http://dx.doi.org/",
+    "doi.org/",
+    "doi:",
+)
+DOI_ENCODED_SEPARATORS: tuple[str, ...] = ("%2f", "%2F")
+DOI_TRIM_CHARS = " .;,:)]}>\"'"
+DOI_SEPARATOR = "/"
+DOI_AUTHORITY_PREFIX = "10."
+DOI_MIN_LENGTH = 5
+DOI_MAX_LENGTH = 300
+
+
+CLASSIFICATION_DEFAULTS: tuple[dict[str, Any], ...] = (
+    {
+        "column": "publication_type",
+        "alias": {
+            "clinical trial, phase i": "clinical trial",
+            "clinical trial, phase ii": "clinical trial",
+            "historical article": "review",
+            "validation study": "validation study",
+            "lecture": "review",
+            "address": "review",
+        },
+        "drop": [
+            "journal-article",
+            "journal article",
+            "article",
+            "journal",
+            "research support, u.s. gov't, p.h.s.",
+            "research support, non-u.s. gov't",
+            "research support, u.s. gov't, non-p.h.s.",
+            "research support, n.i.h., extramural",
+            "research support, n.i.h., intramural",
+            "research support, american recovery and reinvestment act",
+            "",
+        ],
+    },
+    {
+        "column": "scholar.PublicationTypes",
+        "alias": {
+            "study": None,
+            "clinicaltrial": "clinicaltrial",
+            "review": "review",
+            "lettersandcomments": "lettersandcomments",
+        },
+        "drop": ["journalarticle", "study", ""],
+    },
+    {
+        "column": "OpenAlex.publication_type",
+        "alias": {
+            "paratext": "paratext",
+            "component": "paratext",
+            "article": None,
+            "journal": None,
+            "journal-article": None,
+            "journal article": None,
+        },
+        "drop": ["0", "article", "journal", "journal-article", "journal article", ""],
+    },
+    {
+        "column": "OpenAlex.crossref_type",
+        "alias": {"journal-article": None, "article": None},
+        "drop": ["journal-article", "article", ""],
+    },
+    {
+        "column": "OpenAlex.Genre",
+        "alias": {"article": None, "0": None},
+        "drop": ["0", "article", ""],
+    },
+    {
+        "column": "crossref.publication_type",
+        "alias": {"journal-article": None, "article": None},
+        "drop": ["journal-article", "article", ""],
+    },
+)
+
+CLASSIFICATION_COLUMN_ALIASES: dict[str, str] = {
+    "PubMed.publication_type": "publication_type",
+}
+
+
 def _sanitize_digits(value: Any) -> str:
     text = to_text(value)
     digits = "".join(ch for ch in text if ch.isdigit())
@@ -32,25 +117,48 @@ def _sanitize_pmid(value: Any) -> Optional[str]:
     return digits or None
 
 
+def _lowercase_nullable(series: pd.Series) -> pd.Series:
+    """Return nullable series lowered without trimming."""
+
+    if series.empty:
+        return series.copy()
+    return series.astype("string").str.lower()
+
+
+def _normalize_identifier_value(value: Any) -> Any:
+    if pd.isna(value):
+        return pd.NA
+    normalized = normalize_whitespace(value, lower=True, strip=True)
+    return normalized if normalized else pd.NA
+
+
 def _normalize_doi(value: Any) -> Optional[str]:
-    text = to_text(value)
+    text = normalize_whitespace(value, lower=True, strip=True)
     if not text:
         return None
-    lowered = text.lower()
-    for prefix in (
-        "doi:",
-        "https://doi.org/",
-        "http://doi.org/",
-        "https://dx.doi.org/",
-        "http://dx.doi.org/",
-    ):
-        if lowered.startswith(prefix):
-            lowered = lowered[len(prefix) :]
-            break
-    normalized = lowered.strip().replace(" ", "")
-    if not normalized or "/" not in normalized:
+
+    stripped = text
+    for prefix in DOI_PREFIXES:
+        while stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :]
+
+    decoded = stripped
+    for code in DOI_ENCODED_SEPARATORS:
+        decoded = decoded.replace(code, DOI_SEPARATOR)
+
+    trimmed = decoded.strip(DOI_TRIM_CHARS)
+    compact = "".join(trimmed.split())
+
+    if not compact:
         return None
-    return normalized
+    if not compact.startswith(DOI_AUTHORITY_PREFIX):
+        return None
+    if DOI_SEPARATOR not in compact:
+        return None
+    if not (DOI_MIN_LENGTH <= len(compact) <= DOI_MAX_LENGTH):
+        return None
+
+    return compact
 
 
 def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
@@ -110,6 +218,14 @@ def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
 
     if "authors" in prepared.columns:
         prepared["authors"] = prepared["authors"].apply(to_text)
+
+    if "scholar.PublicationTypes" in prepared.columns:
+        lowered = _lowercase_nullable(prepared["scholar.PublicationTypes"])
+        prepared["scholar.PublicationTypes"] = lowered.mask(lowered == "0", pd.NA)
+
+    if "ChEMBL.document_chembl_id" in prepared.columns:
+        ids = prepared["ChEMBL.document_chembl_id"].astype("string")
+        prepared["ChEMBL.document_chembl_id"] = ids.map(_normalize_identifier_value)
 
     pmid_values: list[Optional[str]] = []
     for _, row in prepared.iterrows():
@@ -352,6 +468,17 @@ def _build_validation_frame(validated: pd.DataFrame) -> pd.DataFrame:
         return validated.copy()
 
     result = validated.copy()
+    lowercase_targets = (
+        "MeSH.descriptors",
+        "OpenAlex.MeSH.descriptors",
+        "OpenAlex.MeSH.qualifiers",
+        "PubMed.MeSH_Qualifiers",
+        "PubMed.ChemicalList",
+    )
+    for column in lowercase_targets:
+        if column in result.columns:
+            result[column] = _lowercase_nullable(result[column])
+
     support = pd.to_numeric(result.get("consensus_support"), errors="coerce").fillna(0)
     invalid_issue = result.get("invalid_issue", False)
     invalid_volume = result.get("invalid_volume", False)
@@ -581,6 +708,9 @@ def _aggregate_activity(
     aggregated["significant_citations_fraction"] = aggregated[
         "significant_citations_fraction"
     ].astype("boolean")
+    if "document_chembl_id" in aggregated.columns:
+        ids = aggregated["document_chembl_id"].astype("string")
+        aggregated["document_chembl_id"] = ids.map(_normalize_identifier_value)
     return aggregated
 
 
@@ -661,14 +791,109 @@ def _merge_document_reference(
     return merged
 
 
+def _canonical_classification_column(column: str) -> str:
+    return CLASSIFICATION_COLUMN_ALIASES.get(column, column)
+
+
+def _deduplicate_drop_list(values: Iterable[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    empty_included = False
+    for value in values:
+        token = value or ""
+        if token == "":
+            if empty_included:
+                continue
+            empty_included = True
+            deduped.append("")
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    return deduped
+
+
+def _merge_classification_rule(
+    column: str,
+    default_rule: Optional[dict[str, Any]],
+    user_rule: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    base_alias: dict[str, Optional[str]] = {}
+    base_drop: list[str] = []
+    if default_rule:
+        base_alias = dict(default_rule.get("alias", {}))
+        base_drop = list(default_rule.get("drop", []))
+
+    if user_rule:
+        user_alias = user_rule.get("alias") or {}
+        base_alias.update(user_alias)
+        user_drop = user_rule.get("drop") or []
+        base_drop.extend(user_drop)
+
+    base_drop = _deduplicate_drop_list(base_drop)
+
+    rule: dict[str, Any] = {"column": column}
+    if base_alias:
+        rule["alias"] = base_alias
+    if base_drop:
+        rule["drop"] = base_drop
+    return rule
+
+
 def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    rules = (
+    user_rules = (
         config.get("pipeline", {}).get("document", {}).get("classification_rules", [])
     )
-    if not rules:
+
+    if not CLASSIFICATION_DEFAULTS and not user_rules:
         return df
+
+    prepared_user_rules: dict[str, dict[str, Any]] = {}
+    user_order: list[str] = []
+    for raw_rule in user_rules:
+        column_name = raw_rule.get("column")
+        if not column_name:
+            continue
+        canonical = _canonical_classification_column(column_name)
+        prepared = dict(raw_rule)
+        prepared["column"] = canonical
+        prepared_user_rules[canonical] = prepared
+        if canonical not in user_order:
+            user_order.append(canonical)
+
+    defaults_map = {rule["column"]: rule for rule in CLASSIFICATION_DEFAULTS}
+    merged_rules: list[dict[str, Any]] = []
+
+    for default_rule in CLASSIFICATION_DEFAULTS:
+        column = default_rule["column"]
+        user_rule = prepared_user_rules.pop(column, None)
+        merged = _merge_classification_rule(column, default_rule, user_rule)
+        if merged:
+            merged_rules.append(merged)
+        if column in user_order:
+            user_order.remove(column)
+
+    for column in user_order:
+        user_rule = prepared_user_rules.pop(column, None)
+        if not user_rule:
+            continue
+        merged = _merge_classification_rule(column, None, user_rule)
+        if merged:
+            merged_rules.append(merged)
+
+    for column, default_rule in defaults_map.items():
+        if column in {rule["column"] for rule in merged_rules}:
+            continue
+        merged = _merge_classification_rule(column, default_rule, None)
+        if merged:
+            merged_rules.append(merged)
+
+    if not merged_rules:
+        return df
+
     result = df.copy()
-    for rule in rules:
+    for rule in merged_rules:
         column = rule.get("column")
         if column not in result.columns:
             continue
@@ -682,19 +907,6 @@ def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             sort=False,
         )
     return result
-
-
-def _resolve_document_id_column(document_df: pd.DataFrame) -> Optional[str]:
-    """Find the best available document identifier column."""
-
-    for candidate in (
-        "ChEMBL.document_chembl_id",
-        "document_chembl_id",
-        "document_id",
-    ):
-        if candidate in document_df.columns:
-            return candidate
-    return None
 def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
     pub_type = to_text(row.get("PubMed.publication_type", ""))
     scholar_type = to_text(row.get("scholar.PublicationTypes", ""))
@@ -730,7 +942,6 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             "OpenAlex.MeSH.descriptors": "OpenAlex.MeSH",
             "PubMed.MeSH_Qualifiers": "MeSH.qualifiers",
             "PubMed.ChemicalList": "chemical_list",
-            "publication_type": "PubMed.publication_type",
         }
         for source, target in rename_map.items():
             if source in validated.columns:
@@ -752,30 +963,23 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     activity_prepared = _prepare_activity(activity_df)
     aggregates = _aggregate_activity(activity_prepared, thresholds_df)
 
-    document_id_column = _resolve_document_id_column(document_df)
-    if document_id_column is None:
+    document_df = ensure_columns(
+        document_df,
+        ["ChEMBL.document_chembl_id"],
+        {"ChEMBL.document_chembl_id": "string"},
+    )
+
+    if "ChEMBL.document_chembl_id" not in document_df.columns:
         logger.warning("Document identifier column is missing; skipping activity merge")
         merged = document_df.copy()
     else:
-        aggregates_key = "document_chembl_id"
-        if (
-            document_id_column != aggregates_key
-            and aggregates_key in aggregates.columns
-        ):
-            aggregates = aggregates.rename(
-                columns={aggregates_key: document_id_column}
-            )
-            aggregates_key = document_id_column
-
         merged = document_df.merge(
             aggregates,
-            left_on=document_id_column,
-            right_on=aggregates_key,
+            left_on="ChEMBL.document_chembl_id",
+            right_on="document_chembl_id",
             how="left",
         )
-
-        if document_id_column != "document_chembl_id":
-            merged = merged.drop(columns=["document_chembl_id"], errors="ignore")
+        merged = merged.drop(columns=["document_chembl_id"], errors="ignore")
 
     for column in ("n_activity", "citations", "n_assay", "n_testitem"):
         if column in merged.columns:
@@ -799,7 +1003,18 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         normalized["review"] = False
     normalized["review"] = normalized["review"].fillna(False).astype("boolean")
     if response_columns:
-        response_frame = normalized.reindex(columns=response_columns, fill_value="")
+        resolved_columns: list[str] = []
+        seen_columns: set[str] = set()
+        for column in response_columns:
+            canonical = _canonical_classification_column(column)
+            candidate = canonical if canonical in normalized.columns else column
+            if candidate not in normalized.columns:
+                candidate = column
+            if candidate in seen_columns:
+                continue
+            seen_columns.add(candidate)
+            resolved_columns.append(candidate)
+        response_frame = normalized.reindex(columns=resolved_columns, fill_value="")
         response_count = response_frame.apply(lambda column: column.map(to_text)).ne("").sum(
             axis=1
         )
@@ -820,6 +1035,15 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     rename_map = document_cfg.get("rename_map", DOCUMENT_RENAME_MAP)
     if rename_map:
+        conflicting_targets = [
+            target
+            for source, target in rename_map.items()
+            if source != target
+            and source in normalized.columns
+            and target in normalized.columns
+        ]
+        if conflicting_targets:
+            normalized = normalized.drop(columns=conflicting_targets, errors="ignore")
         normalized = normalized.rename(columns=rename_map)
 
     column_types = document_cfg.get("type_map", {})

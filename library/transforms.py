@@ -26,6 +26,22 @@ def to_text(value: Any) -> str:
     return stripped
 
 
+def normalize_whitespace(value: Any, lower: bool = True, strip: bool = True) -> str:
+    """Clean control characters and optionally trim/lower text values."""
+
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    if pd.isna(value):
+        return ""
+
+    text = str(value)
+    cleaned = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C")
+    trimmed = cleaned.strip() if strip else cleaned
+    return trimmed.lower() if lower else trimmed
+
+
 def normalize_string(value: Any, lower: bool = True) -> Any:
     """Normalize scalar text values by trimming and optional lower-casing."""
 
@@ -173,4 +189,10 @@ def normalize_pipe(
     return "|".join(cleaned)
 
 
-__all__ = ["to_text", "clean_pipe", "normalize_pipe", "normalize_string"]
+__all__ = [
+    "to_text",
+    "clean_pipe",
+    "normalize_pipe",
+    "normalize_string",
+    "normalize_whitespace",
+]
