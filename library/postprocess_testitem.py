@@ -99,6 +99,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     cleaning_config = config.get("cleaning", {})
     sort_pipes = bool(cleaning_config.get("sort_pipes", True))
+    pipeline_testitem = config.get("pipeline", {}).get("testitem", {})
 
     if "pref_name" in typed.columns:
         typed["pref_name"] = typed["pref_name"].map(normalize_string).astype("string")
@@ -115,16 +116,12 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             pd.NA, index=typed.index, dtype="string"
         )
 
-    chirality_reference = int(
-        config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
-    )
+    chirality_reference = int(pipeline_testitem.get("chirality_reference", 1))
     typed["unknown_chirality"] = _compute_unknown_chirality(
         typed.get("nstereo", pd.Series([], dtype="Int64")), chirality_reference
     )
 
-    invalid_rules = (
-        config.get("pipeline", {}).get("testitem", {}).get("invalid_rules", {})
-    )
+    invalid_rules = pipeline_testitem.get("invalid_rules", {})
     molecule_type_expected = invalid_rules.get("molecule_type")
     structure_type_expected = invalid_rules.get("structure_type")
 
@@ -155,6 +152,25 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     typed["invalid_record"] = typed.apply(_compute_invalid, axis=1)
 
+    skeleton_length = int(pipeline_testitem.get("skeleton_length", 14))
+
+    def _compute_skeleton(value: object) -> object:
+        if pd.isna(value):
+            return pd.NA
+        text = to_text(value)
+        if text == "":
+            return pd.NA
+        return text[:skeleton_length]
+
+    if "standard_inchi_key" in typed.columns:
+        typed["skeleton_inchi_key"] = (
+            typed["standard_inchi_key"].map(_compute_skeleton).astype("string")
+        )
+    else:
+        typed["skeleton_inchi_key"] = pd.Series(
+            pd.NA, index=typed.index, dtype="string"
+        )
+
     processed = typed.drop(columns=["nstereo"], errors="ignore")
 
     columns_to_remove = ["document_chembl_id", "document_testitem_total"]
@@ -162,7 +178,6 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         columns=[col for col in columns_to_remove if col in processed.columns]
     )
 
-    pipeline_testitem = config.get("pipeline", {}).get("testitem", {})
     column_types = pipeline_testitem.get("type_map", {})
     column_order = pipeline_testitem.get("column_order", [])
 
