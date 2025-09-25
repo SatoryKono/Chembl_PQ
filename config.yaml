@@ -106,6 +106,14 @@ pipeline:
         - "scholar.PublicationTypes"
         - "OpenAlex.publication_type"
         - "OpenAlex.crossref_type"
+    rename_map:
+      _title: title
+      abstract_: abstract
+      MeSH.descriptors: "PubMed.MeSH"
+      OpenAlex.MeSH.descriptors: "OpenAlex.MeSH"
+      PubMed.MeSH_Qualifiers: "MeSH.qualifiers"
+      PubMed.ChemicalList: chemical_list
+      publication_type: "PubMed.publication_type"
     type_map:
       PMID: Int64
       doi: string

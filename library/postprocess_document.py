@@ -20,6 +20,17 @@ ACTIVITY_SCHEMA = {
 }
 
 
+DOCUMENT_RENAME_MAP = {
+    "_title": "title",
+    "abstract_": "abstract",
+    "MeSH.descriptors": "PubMed.MeSH",
+    "OpenAlex.MeSH.descriptors": "OpenAlex.MeSH",
+    "PubMed.MeSH_Qualifiers": "MeSH.qualifiers",
+    "PubMed.ChemicalList": "chemical_list",
+    "publication_type": "PubMed.publication_type",
+}
+
+
 def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
     if activity.empty:
         return pd.DataFrame(columns=ACTIVITY_SCHEMA.keys()).astype(ACTIVITY_SCHEMA)
@@ -231,6 +242,10 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "K_min_significant" in normalized.columns:
         normalized = normalized.drop(columns=["K_min_significant"])
 
+
+    rename_map = document_cfg.get("rename_map", DOCUMENT_RENAME_MAP)
+    if rename_map:
+        normalized = normalized.rename(columns=rename_map)
 
     column_types = document_cfg.get("type_map", {})
     column_order = document_cfg.get("column_order", [])
