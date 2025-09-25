@@ -26,11 +26,13 @@ def main() -> None:
     config = load_config(config_path)
 
     testitem_df = read_csv("testitem_csv", config)
+    testitem_reference_df = read_csv("testitem_reference_csv", config)
     activity_df = read_csv("activity_csv", config)
 
     result = run_testitem(
         {
             "testitem": testitem_df,
+            "testitem_reference": testitem_reference_df,
             "activity": activity_df,
         },
         config,

@@ -37,8 +37,15 @@ def document_inputs(test_config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
 def testitem_inputs(test_config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     base = Path(test_config["source"]["base_path"])
     testitem_df = pd.read_csv(base / test_config["files"]["testitem_csv"])
+    testitem_reference_df = pd.read_csv(
+        base / test_config["files"]["testitem_reference_csv"]
+    )
     activity_df = pd.read_csv(base / test_config["files"]["activity_csv"])
-    return {"testitem": testitem_df, "activity": activity_df}
+    return {
+        "testitem": testitem_df,
+        "testitem_reference": testitem_reference_df,
+        "activity": activity_df,
+    }
 
 
 @pytest.fixture()
