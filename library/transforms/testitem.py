@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import logging
 from typing import Dict
 
 import pandas as pd
@@ -8,8 +9,8 @@ import pandas as pd
 #             2024-10-05 — добавлен справочник для подстановки all_names/nstereo.
 #             2024-10-10 — синхронизированы агрегации, нормализация текстов и проверка invalid_record.
 #             2024-10-19 — убраны документные агрегаты из итогового набора данных.
-from .transforms import normalize_pipe, normalize_string, to_text
-from .utils import (
+from .common import normalize_pipe, normalize_string, to_text
+from ..validators import (
     coerce_types,
     ensure_columns,
 )
@@ -75,7 +76,7 @@ def _apply_reference(
     return coerce_types(result, {col: type_spec[col] for col in override_columns})
 
 
-def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
+def normalize_testitem(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     testitem_df = inputs["testitem"].copy()
     reference_df = _prepare_reference(inputs.get("testitem_reference"))
 
@@ -224,4 +225,4 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     return typed_result
 
 
-__all__ = ["run"]
+__all__ = ["normalize_testitem"]

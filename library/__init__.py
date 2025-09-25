@@ -1,10 +1,12 @@
 """Utility package for ChEMBL post-processing pipelines."""
 
-from . import loaders, transforms, utils, validation
+from . import chembl_client, config, io, throttling, transforms, validators
 
 __all__ = [
-    "loaders",
+    "chembl_client",
+    "config",
+    "io",
+    "throttling",
     "transforms",
-    "utils",
-    "validation",
+    "validators",
 ]

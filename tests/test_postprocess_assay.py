@@ -3,12 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pandas.testing as pdt
 
-from library.postprocess_assay import run
-from library.utils import coerce_types
+from library.transforms.assay import normalize_assay
+from library.validators import coerce_types
 
 
 def test_assay_postprocess(assay_inputs, test_config) -> None:
-    result = run(assay_inputs, test_config)
+    result = normalize_assay(assay_inputs, test_config)
 
     expected = pd.DataFrame(
         {

@@ -1,3 +1,18 @@
+[project]
+name = "chembl-data-acquisition"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "requests",
+  "pyyaml",
+  "pandas",
+  "pyarrow",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [tool.black]
 line-length = 88
 target-version = ["py310"]

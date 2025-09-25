@@ -5,8 +5,8 @@ from typing import Dict
 
 import pandas as pd
 
-from .postprocess_document import _prepare_activity
-from .utils import coerce_types, finalize_aggregate_columns
+from .document import _prepare_activity
+from ..validators import coerce_types, finalize_aggregate_columns
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _aggregate_assay(activity: pd.DataFrame) -> pd.DataFrame:
     return aggregated
 
 
-def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
+def normalize_assay(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     assay_df = inputs["assay"].copy()
     activity_df = _prepare_activity(inputs.get("activity", pd.DataFrame()))
 
@@ -59,4 +59,4 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     return typed
 
 
-__all__ = ["run"]
+__all__ = ["normalize_assay"]

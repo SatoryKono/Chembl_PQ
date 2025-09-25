@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from library import loaders
+from library import io as library_io
 
 
 def _build_config(base_path: Path, file_name: str, *, extra_io: dict[str, Any] | None = None) -> dict:
@@ -32,7 +32,7 @@ def test_read_csv(tmp_path: Path) -> None:
     sample_path.write_text("col1,col2\n1,2\n", encoding="utf-8")
     config = _build_config(tmp_path, "input.csv")
 
-    df = loaders.read_csv("sample", config)
+    df = library_io.read_csv("sample", config)
 
     assert list(df.columns) == ["col1", "col2"]
     assert df.iloc[0, 0] == 1
@@ -49,9 +49,9 @@ def test_read_csv_sets_low_memory(monkeypatch, tmp_path: Path) -> None:
         captured["kwargs"] = kwargs
         return pd.DataFrame({"col1": [1]})
 
-    monkeypatch.setattr(loaders.pd, "read_csv", fake_read_csv)
+    monkeypatch.setattr(library_io.pd, "read_csv", fake_read_csv)
 
-    loaders.read_csv("sample", config)
+    library_io.read_csv("sample", config)
 
     assert captured["kwargs"]["low_memory"] is False
 
@@ -66,7 +66,7 @@ def test_read_csv_with_encoding_fallback(tmp_path: Path) -> None:
         extra_io={"encoding_fallbacks": ["cp1251"]},
     )
 
-    df = loaders.read_csv("sample", config)
+    df = library_io.read_csv("sample", config)
 
     assert "тест" in df.columns
     assert df.at[0, "тест"] == "привет"
@@ -77,7 +77,7 @@ def test_write_csv(tmp_path: Path) -> None:
     config = _build_config(tmp_path, "output.csv")
     output_path = tmp_path / "output.csv"
 
-    loaders.write_csv(df, output_path, config)
+    library_io.write_csv(df, output_path, config)
 
     with output_path.open("r", encoding="utf-8") as handle:
         reader = csv.reader(handle)

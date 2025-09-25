@@ -16,10 +16,11 @@ _BACKSLASH_PATTERN = re.compile(
 _VALID_ESCAPE_CHARS = set("abfnrtv0-7xuU\"'\\NLP")
 
 
-def load_config(path: Path) -> Dict[str, Any]:
+def load_config(path: str | Path = "config.yaml") -> Dict[str, Any]:
     """Load a YAML configuration file with Windows path safeguards."""
 
-    text = path.read_text(encoding="utf-8")
+    path_obj = Path(path)
+    text = path_obj.read_text(encoding="utf-8")
     try:
         return _parse_yaml(text)
     except yaml.YAMLError as error:

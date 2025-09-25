@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from library.config import load_config
-from scripts.make_document_postprocessing import get_document_data
+from scripts.get_document_data import get_document_data
 
 
 def test_get_document_data_loads_inputs() -> None:
