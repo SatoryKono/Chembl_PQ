@@ -4,19 +4,74 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any, Dict
+
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from library.config import load_config
+from library.loaders import LoaderError, read_csv, write_csv
+from library.postprocess_document import run as run_document
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
-def main() -> None:
-    from library.config import load_config
-    from library.loaders import read_csv, write_csv
-    from library.postprocess_document import run as run_document
+def _resolve_path_key(
+    files_cfg: Dict[str, str], primary: str, fallback: str | None = None
+) -> str:
+    if primary in files_cfg:
+        return primary
+    if fallback is not None:
+        return fallback
+    raise LoaderError(f"No configured path for '{primary}'")
 
+
+def get_document_data(config: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """Load all inputs required by the document pipeline."""
+
+    files_cfg = config.get("files", {})
+    cache: Dict[str, pd.DataFrame] = {}
+
+    def load_dataset(path_key: str) -> pd.DataFrame:
+        if path_key not in cache:
+            cache[path_key] = read_csv(path_key, config)
+        return cache[path_key]
+
+    document_df = load_dataset("document_csv")
+
+    document_out_key = _resolve_path_key(
+        files_cfg, "document_csv_out", "document_out_csv"
+    )
+    document_out_df = load_dataset(document_out_key)
+
+    document_reference_key = _resolve_path_key(
+        files_cfg, "document_reference_csv", "document_csv"
+    )
+    document_reference_df = load_dataset(document_reference_key)
+
+    activity_key = _resolve_path_key(
+        files_cfg, "activity_reference_csv", "activity_csv"
+    )
+    activity_df = load_dataset(activity_key)
+
+    citation_key = _resolve_path_key(
+        files_cfg, "citation_fraction_csv", "citation_csv"
+    )
+    citation_df = load_dataset(citation_key)
+
+    return {
+        "document": document_df,
+        "document_out": document_out_df,
+        "document_reference": document_reference_df,
+        "activity": activity_df,
+        "citation_fraction": citation_df,
+    }
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="Document post-processing pipeline")
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--out", help="Override output path")
@@ -25,46 +80,9 @@ def main() -> None:
     config_path = Path(args.config)
     config = load_config(config_path)
 
-    document_df = read_csv("document_csv", config)
+    inputs = get_document_data(config)
 
-    files_cfg = config.get("files", {})
-    document_out_key = "document_csv_out" if "document_csv_out" in files_cfg else "document_out_csv"
-    document_out_df = read_csv(document_out_key, config)
-
-    document_ref_key = (
-        "document_reference_csv"
-        if "document_reference_csv" in files_cfg
-        else "document_csv"
-    )
-    activity_ref_key = (
-        "activity_reference_csv"
-        if "activity_reference_csv" in files_cfg
-        else "activity_csv"
-    )
-    activity_ref_key = (
-        "activity_reference_csv"
-        if "activity_reference_csv" in files_cfg
-        else "activity_csv"
-    )
-    citation_ref_key = (
-        "citation_fraction_csv"
-        if "citation_fraction_csv" in files_cfg
-        else "citation_csv"
-    )
-    document_ref_df = read_csv(document_ref_key, config)
-    activity_ref_df = read_csv(activity_ref_key, config)
-    citation_ref_df = read_csv(citation_ref_key, config)
-
-    result = run_document(
-        {
-            "document": document_df,
-            "document_out": document_out_df,
-            "document_reference": document_ref_df,
-            "activity":  activity_ref_df,
-            "citation_fraction": citation_ref_key,
-        },
-        config,
-    )
+    result = run_document(inputs, config)
 
     outputs_cfg = config.get("outputs", {})
     default_path = (
