@@ -1,4 +1,6 @@
 let
+  // ===== Changelog =====
+  // 2024-10-14: Restore protein_class_pred_* columns by retaining IUPHAR predictions in target export.
   // ===== Parameters =====
   // Paths: relative file locations. Encodings: named code pages. Delimiters: reusable separators. PathEncodingKeys: map path keys to encoding keys. Defaults: fallback keys for loaders. Tables: logical dataset handles for inputs/outputs.
   Parameters = [
@@ -3644,7 +3646,19 @@ let
           dropPrediction = PredCols,
           expandPrediction = PredColsForExpansion,
           dropIupharId = IupharIdCols,
-          dropForKnown = List.Combine({dropPrediction, {"ec_number", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "known_id"}}),
+          dropForKnown = {
+            "ec_number",
+            "gene_name",
+            "synonyms",
+            "organism",
+            "taxon_id",
+            "lineage_superkingdom",
+            "lineage_phylum",
+            "lineage_class",
+            "cellularity",
+            "multifunctional_enzyme",
+            "known_id"
+          },
           mergeIuphar = (src as table) as table =>
             let
               trimmed = Drop(src, List.Combine({dropPrediction, dropIupharId})),
@@ -3837,32 +3851,13 @@ let
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
   get_target = () =>
     let
-      classificationColumns = {
+      predictionColumns = {
         "protein_class_pred_L1",
         "protein_class_pred_L2",
         "protein_class_pred_L3",
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
-        "protein_class_pred_confidence",
-        "protein_classifications",
-        "iuphar_target_id",
-        "iuphar_family_id",
-        "iuphar_type",
-        "iuphar_class",
-        "iuphar_subclass",
-        "iuphar_chain",
-        "iuphar_name",
-        "iuphar_full_id_path",
-        "iuphar_full_name_path"
-      },
-      organismAttributes = {
-        "taxon_id",
-        "lineage_superkingdom",
-        "lineage_phylum",
-        "lineage_class",
-        "reaction_ec_numbers",
-        "cellularity",
-        "multifunctional_enzyme"
+        "protein_class_pred_confidence"
       },
       iupharAttributes = {
         "iuphar_name",
@@ -3874,6 +3869,17 @@ let
         "iuphar_chain",
         "iuphar_full_id_path",
         "iuphar_full_name_path"
+      },
+      columnsToDropFromMain = List.Combine({predictionColumns, {"protein_classifications"}, iupharAttributes}),
+      iupharColumns = List.Combine({predictionColumns, iupharAttributes}),
+      organismAttributes = {
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "reaction_ec_numbers",
+        "cellularity",
+        "multifunctional_enzyme"
       },
       outputColumns = {
         "target_chembl_id",
@@ -3905,7 +3911,7 @@ let
         "iuphar_full_name_path"
       },
       baseMain = TargetHandlers[main](Data[Target_out]),
-      sanitizedMain = DropColumns(baseMain, classificationColumns),
+      sanitizedMain = DropColumns(baseMain, columnsToDropFromMain),
       organismSource = TargetHandlers[organism](Data[Target_out]),
       organismTable = Table.Buffer(
         SelectColumnsSafe(
@@ -3925,7 +3931,7 @@ let
       iupharTable = Table.Buffer(
         SelectColumnsSafe(
           TargetHandlers[IUPHAR](),
-          List.Combine({{"target_chembl_id"}, iupharAttributes})
+          List.Combine({{"target_chembl_id"}, iupharColumns})
         )
       ),
       withIuphar = JoinAndExpand(
@@ -3934,8 +3940,8 @@ let
         iupharTable,
         {"target_chembl_id"},
         "IUPHAR",
-        iupharAttributes,
-        iupharAttributes
+        iupharColumns,
+        iupharColumns
       ),
       ordered = SelectColumnsInOrder(withIuphar, outputColumns)
     in
