@@ -75,6 +75,13 @@ LOWER_CASE_COLUMNS: tuple[str, ...] = (
     "OpenAlex.publication_type",
     "OpenAlex.crossref_type",
     "crossref.publication_type",
+    "MeSH.descriptors",
+    "PubMed.MeSH_Qualifiers",
+    "OpenAlex.MeSH.descriptors",
+    "OpenAlex.MeSH.qualifiers",
+    "PubMed.ChemicalList",
+    "chemical_list",
+    "authors",
 )
 
 
@@ -437,9 +444,26 @@ def _coalesce_text(target: pd.Series, fallback: pd.Series) -> pd.Series:
 def _build_completed(row: pd.Series) -> str:
     def component(field: str, digits: int) -> str:
         value = row.get(field)
-        text = to_text(value)
-        if not text:
+        if value is None:
             return "0" * digits
+        if isinstance(value, str) and value.strip().upper() == "<NA>":
+            return "0" * digits
+        if pd.isna(value):
+            return "0" * digits
+
+        text = to_text(value)
+        if not text or text.upper() == "<NA>":
+            return "0" * digits
+
+        numeric_candidate = pd.to_numeric(text, errors="coerce")
+        if pd.notna(numeric_candidate) and float(numeric_candidate).is_integer():
+            text = str(int(float(numeric_candidate)))
+
+        if "." in text:
+            integer_part, fractional_part = text.split(".", 1)
+            if fractional_part.strip("0") == "":
+                text = integer_part
+
         return text.zfill(digits)
 
     completed_year = component("completed.year", 4)
@@ -474,8 +498,18 @@ def _build_completed(row: pd.Series) -> str:
 
 
 def _build_sort_order(row: pd.Series) -> str:
-    issn = to_text(row.get("ISSN")) or "unknown"
-    completed_value = to_text(row.get("completed")) or "0000-00-00"
+    def sanitize(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str) and value.strip().upper() == "<NA>":
+            return ""
+        if pd.isna(value):
+            return ""
+        text = to_text(value)
+        return "" if text.upper() == "<NA>" else text
+
+    issn = sanitize(row.get("ISSN")) or "unknown"
+    completed_value = sanitize(row.get("completed")) or "0000-00-00"
     pmid = _sanitize_digits(row.get("PMID"))
     pmid_value = pmid.zfill(8) if pmid else "00000000"
     return f"{issn}:{completed_value}:{pmid_value}"
@@ -692,29 +726,31 @@ def _aggregate_activity(
         how="left",
     )
 
-    for column in ("n_activity", "citations", "n_assay", "n_testitem"):
+    numeric_columns = ("n_activity", "citations", "n_assay", "n_testitem")
+    for column in numeric_columns:
         if column in aggregated.columns:
-            aggregated[column] = pd.to_numeric(
-                aggregated[column], errors="coerce"
-            ).astype("Int64")
+            aggregated[column] = (
+                pd.to_numeric(aggregated[column], errors="coerce")
+                .fillna(0)
+                .astype("Int64")
+            )
+        else:
+            aggregated[column] = pd.Series(0, index=aggregated.index, dtype="Int64")
 
     if "K_min_significant" in aggregated.columns:
-        aggregated["K_min_significant"] = pd.to_numeric(
-            aggregated["K_min_significant"], errors="coerce"
-        ).astype("Int64")
-
-    aggregated["significant_citations_fraction"] = pd.Series(
-        pd.NA, index=aggregated.index, dtype="boolean"
-    )
-    mask = aggregated["citations"].notna() & aggregated["K_min_significant"].notna()
-    if mask.any():
-        aggregated.loc[mask, "significant_citations_fraction"] = (
-            aggregated.loc[mask, "citations"]
-            > aggregated.loc[mask, "K_min_significant"]
+        aggregated["K_min_significant"] = (
+            pd.to_numeric(aggregated["K_min_significant"], errors="coerce")
+            .fillna(0)
+            .astype("Int64")
         )
-    aggregated["significant_citations_fraction"] = aggregated[
-        "significant_citations_fraction"
-    ].astype("boolean")
+    else:
+        aggregated["K_min_significant"] = pd.Series(
+            0, index=aggregated.index, dtype="Int64"
+        )
+
+    aggregated["significant_citations_fraction"] = (
+        aggregated["citations"] > aggregated["K_min_significant"]
+    ).astype("boolean")
     return aggregated
 
 
