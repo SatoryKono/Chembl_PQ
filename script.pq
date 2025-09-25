@@ -2427,16 +2427,17 @@ let
             ),
             type logical
           ),
-          columnsToDrop = {canonicalSource},
+          columnsToDrop = {
+            canonicalSource,
+            "molecule_type",
+            "structure_type",
+            "is_radical"
+          },
           sanitizedColumns = RemoveColumnsSafe(withInvalidFlag, columnsToDrop),
           columnOrder = {
             "molecule_chembl_id",
             "pref_name",
             "all_names",
-
-            "molecule_type",
-            "structure_type",
-            "is_radical",
             "standard_inchi_key",
             "canonical_smiles",
             "skeleton_inchi_key",
