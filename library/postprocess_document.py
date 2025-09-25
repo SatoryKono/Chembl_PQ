@@ -136,8 +136,6 @@ def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     )
     if not rules:
         return df
-    sort_pipes = config.get("cleaning", {}).get("sort_pipes", True)
-
     result = df.copy()
     for rule in rules:
         column = rule.get("column")
@@ -150,7 +148,7 @@ def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             result[column],
             alias_map=alias_map,
             drop_list=drop_list,
-            sort=bool(sort_pipes),
+            sort=False,
         )
     return result
 def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:

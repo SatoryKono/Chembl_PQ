@@ -22,9 +22,9 @@ def test_target_postprocess(target_inputs, test_config) -> None:
             ],
             "gene_name": ["gene1", "betagene", "gammagene"],
             "synonyms": [
-                "alpha canonical|alpha pref|alt a|altalpha|ga|gene1|subunit alpha",
+                "alpha canonical|alpha pref|altalpha|alt a|ga|gene1|subunit alpha",
                 "beta canonical|beta pref",
-                "gamma alt|gamma canonical|gamma subunit|gg|gg1",
+                "gamma canonical|gamma alt|gg|gg1|gamma subunit",
             ],
             "protein_class_pred_L1": [
                 "Enzyme",

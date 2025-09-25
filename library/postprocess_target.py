@@ -244,7 +244,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             target_df["synonyms"],
             alias_map=None,
             drop_list=None,
-            sort=config.get("cleaning", {}).get("sort_pipes", True),
+            sort=False,
         )
 
     output_columns = (
