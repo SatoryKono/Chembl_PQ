@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import Any, Dict, Iterable, Optional
 
 import pandas as pd
@@ -9,6 +10,19 @@ from .transforms import clean_pipe, to_text
 from .utils import coerce_types, ensure_columns
 
 logger = logging.getLogger(__name__)
+
+
+TRIM_CHARS = " .;,:)]}>\"'"
+DOI_PREFIXES: tuple[str, ...] = (
+    "doi:",
+    "https://doi.org/",
+    "http://doi.org/",
+    "https://dx.doi.org/",
+    "http://dx.doi.org/",
+    "doi.org/",
+    "dx.doi.org/",
+)
+DOI_ENCODED_SEPARATORS: tuple[str, ...] = ("%2f", "%2F")
 
 
 PMID_SOURCES: tuple[str, ...] = (
@@ -36,21 +50,25 @@ def _normalize_doi(value: Any) -> Optional[str]:
     text = to_text(value)
     if not text:
         return None
+
     lowered = text.lower()
-    for prefix in (
-        "doi:",
-        "https://doi.org/",
-        "http://doi.org/",
-        "https://dx.doi.org/",
-        "http://dx.doi.org/",
-    ):
-        if lowered.startswith(prefix):
-            lowered = lowered[len(prefix) :]
+    without_prefix = lowered
+    for prefix in DOI_PREFIXES:
+        if without_prefix.startswith(prefix):
+            without_prefix = without_prefix[len(prefix) :]
             break
-    normalized = lowered.strip().replace(" ", "")
-    if not normalized or "/" not in normalized:
+
+    trimmed = without_prefix.strip(TRIM_CHARS)
+    compact = trimmed.replace(" ", "")
+    for encoded in DOI_ENCODED_SEPARATORS:
+        compact = compact.replace(encoded, "/")
+
+    if not compact or "/" not in compact or not compact.startswith("10."):
         return None
-    return normalized
+    if not 5 <= len(compact) <= 300:
+        return None
+
+    return compact
 
 
 def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
@@ -165,58 +183,118 @@ def _validate_rows(document_df: pd.DataFrame) -> pd.DataFrame:
     if document_df.empty:
         return document_df.copy()
 
-    priority = {
-        "pm": 0,
-        "crossref": 1,
-        "openalex": 2,
-        "chembl": 3,
-        "scholar": 4,
-    }
-    source_names = {
-        "pm": "PubMed",
-        "crossref": "crossref",
-        "openalex": "OpenAlex",
-        "chembl": "ChEMBL",
-        "scholar": "scholar",
-    }
+    source_specs = (
+        {"key": "pm", "name": "PubMed", "priority": 0, "column": "PubMed.doi"},
+        {"key": "crossref", "name": "crossref", "priority": 1, "column": "crossref.doi"},
+        {"key": "openalex", "name": "OpenAlex", "priority": 2, "column": "OpenAlex.doi"},
+        {"key": "chembl", "name": "ChEMBL", "priority": 3, "column": "ChEMBL.doi"},
+        {"key": "scholar", "name": "scholar", "priority": 4, "column": "scholar.doi"},
+    )
+    fallback_priority = max(spec["priority"] for spec in source_specs) + 1
+
+    def distinct_preserving(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            if value not in seen:
+                seen.add(value)
+                result.append(value)
+        return result
 
     records: list[dict[str, Any]] = []
     for _, row in document_df.iterrows():
         base = row.to_dict()
 
-        doi_candidates = {
-            "pm": row.get("PubMed.doi"),
-            "chembl": row.get("ChEMBL.doi"),
-            "scholar": row.get("scholar.doi"),
-            "crossref": row.get("crossref.doi"),
-            "openalex": row.get("OpenAlex.doi"),
-        }
-        doi_normalized = {key: _normalize_doi(value) for key, value in doi_candidates.items()}
-        counts: dict[str, list[str]] = {}
-        for key, value in doi_normalized.items():
-            if value:
-                counts.setdefault(value, []).append(key)
+        sources: list[dict[str, Any]] = []
+        for spec in source_specs:
+            raw_value = row.get(spec["column"])
+            normalized_value = _normalize_doi(raw_value)
+            source_entry = {
+                **spec,
+                "raw": to_text(raw_value),
+                "norm": normalized_value,
+                "valid": normalized_value is not None,
+            }
+            sources.append(source_entry)
 
-        selected_doi: Optional[str] = None
-        selected_source: Optional[str] = None
-        best_support = 0
-        best_priority = len(priority)
-        for doi_value, providers in counts.items():
-            support = len(providers)
-            provider_priority = min(priority[p] for p in providers)
-            if support > best_support or (
-                support == best_support and provider_priority < best_priority
+        sources_by_key = {entry["key"]: entry for entry in sources}
+        pm_entry = sources_by_key["pm"]
+        valid_sources = [entry for entry in sources if entry["valid"] and entry["norm"]]
+
+        doi_counts = Counter(entry["norm"] for entry in valid_sources)
+
+        def get_priority_for_doi(doi: Optional[str]) -> int:
+            if not doi:
+                return fallback_priority
+            supporters = [
+                entry["priority"]
+                for entry in valid_sources
+                if entry["norm"] == doi
+            ]
+            return min(supporters) if supporters else fallback_priority
+
+        consensus_doi: Optional[str] = None
+        consensus_support = 0
+        best_rank = fallback_priority
+        for doi_value, count in doi_counts.items():
+            rank = get_priority_for_doi(doi_value)
+            if count > consensus_support or (
+                count == consensus_support and rank < best_rank
             ):
-                selected_doi = doi_value
-                selected_source = source_names[
-                    min(providers, key=lambda key: priority[key])
-                ]
-                best_support = support
-                best_priority = provider_priority
+                consensus_doi = doi_value
+                consensus_support = count
+                best_rank = rank
 
-        consensus_support = best_support
-        consensus_doi = selected_doi
-        invalid_doi = selected_doi is None
+        consensus_supporters = [
+            entry
+            for entry in valid_sources
+            if consensus_doi is not None and entry["norm"] == consensus_doi
+        ]
+        consensus_source = (
+            min(consensus_supporters, key=lambda entry: entry["priority"])["name"]
+            if consensus_supporters
+            else None
+        )
+
+        sorted_valid = sorted(valid_sources, key=lambda entry: entry["priority"])
+        if pm_entry["valid"]:
+            selected_doi = pm_entry["norm"]
+            selected_source = pm_entry["name"]
+        elif consensus_support >= 2 and consensus_doi is not None:
+            selected_doi = consensus_doi
+            selected_source = consensus_source
+        elif sorted_valid:
+            selected_doi = sorted_valid[0]["norm"]
+            selected_source = sorted_valid[0]["name"]
+        else:
+            selected_doi = None
+            selected_source = None
+
+        peer_sources = [entry for entry in valid_sources if entry["key"] != "pm"]
+        peer_normalized = [entry["norm"] for entry in peer_sources]
+        has_peer_support = bool(peer_sources)
+        pm_matches_peers = bool(
+            pm_entry["norm"]
+            and any(value == pm_entry["norm"] for value in peer_normalized)
+        )
+
+        invalid_doi = (not pm_entry["valid"] and has_peer_support) or (
+            pm_entry["valid"] and has_peer_support and not pm_matches_peers
+        )
+        if not pm_entry["valid"] and has_peer_support:
+            reason = "pubmed_doi_missing_or_malformed"
+        elif pm_entry["valid"] and has_peer_support and not pm_matches_peers:
+            reason = "pubmed_doi_mismatch_with_sources"
+        elif pm_entry["valid"] and pm_matches_peers:
+            reason = "pubmed_doi_confirmed"
+        else:
+            reason = "insufficient_data"
+
+        same_count = (
+            sum(1 for value in peer_normalized if value == pm_entry["norm"])
+            if pm_entry["norm"]
+            else 0
+        )
 
         title = _choose_text(
             [row.get("title"), row.get("crossref.title"), row.get("ChEMBL.title")]
@@ -252,29 +330,33 @@ def _validate_rows(document_df: pd.DataFrame) -> pd.DataFrame:
         records.append(
             {
                 **base,
-                "doi_same_count": best_support,
+                "doi_same_count": same_count,
                 "invalid_doi": invalid_doi,
-                "reason": "" if not invalid_doi else "missing_doi",
+                "reason": reason,
                 "selected_doi": selected_doi,
                 "selected_source": selected_source,
                 "consensus_doi": consensus_doi,
                 "consensus_support": consensus_support,
-                "pm_doi_norm": doi_normalized["pm"],
-                "pm_valid": doi_normalized["pm"] is not None,
-                "chembl_doi_norm": doi_normalized["chembl"],
-                "chembl_valid": doi_normalized["chembl"] is not None,
-                "scholar_doi_norm": doi_normalized["scholar"],
-                "scholar_valid": doi_normalized["scholar"] is not None,
-                "crossref_doi_norm": doi_normalized["crossref"],
-                "crossref_valid": doi_normalized["crossref"] is not None,
-                "openalex_doi_norm": doi_normalized["openalex"],
-                "openalex_valid": doi_normalized["openalex"] is not None,
-                "pm_doi_raw": to_text(doi_candidates["pm"]),
-                "chembl_doi_raw": to_text(doi_candidates["chembl"]),
-                "scholar_doi_raw": to_text(doi_candidates["scholar"]),
-                "crossref_doi_raw": to_text(doi_candidates["crossref"]),
-                "openalex_doi_raw": to_text(doi_candidates["openalex"]),
-                "peers_valid_distinct": len(counts),
+                "pm_doi_norm": pm_entry["norm"],
+                "pm_valid": pm_entry["valid"],
+                "chembl_doi_norm": sources_by_key["chembl"]["norm"],
+                "chembl_valid": sources_by_key["chembl"]["valid"],
+                "scholar_doi_norm": sources_by_key["scholar"]["norm"],
+                "scholar_valid": sources_by_key["scholar"]["valid"],
+                "crossref_doi_norm": sources_by_key["crossref"]["norm"],
+                "crossref_valid": sources_by_key["crossref"]["valid"],
+                "openalex_doi_norm": sources_by_key["openalex"]["norm"],
+                "openalex_valid": sources_by_key["openalex"]["valid"],
+                "pm_doi_raw": pm_entry["raw"],
+                "chembl_doi_raw": sources_by_key["chembl"]["raw"],
+                "scholar_doi_raw": sources_by_key["scholar"]["raw"],
+                "crossref_doi_raw": sources_by_key["crossref"]["raw"],
+                "openalex_doi_raw": sources_by_key["openalex"]["raw"],
+                "peers_valid_distinct": len(
+                    distinct_preserving(
+                        [entry["norm"] for entry in valid_sources if entry["norm"]]
+                    )
+                ),
                 "new_title": title,
                 "new_abstract": abstract,
                 "new_page": page,
