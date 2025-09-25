@@ -24,10 +24,12 @@ def test_config() -> Dict[str, object]:
 def document_inputs(test_config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     base = Path(test_config["source"]["base_path"])
     document_df = pd.read_csv(base / test_config["files"]["document_csv"])
+    document_out_df = pd.read_csv(base / test_config["files"]["document_out_csv"])
     activity_df = pd.read_csv(base / test_config["files"]["activity_csv"])
     citation_df = pd.read_csv(base / test_config["files"]["citation_fraction_csv"])
     return {
         "document": document_df,
+        "document_out": document_out_df,
         "activity": activity_df,
         "citation_fraction": citation_df,
     }
