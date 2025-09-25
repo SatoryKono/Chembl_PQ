@@ -183,6 +183,9 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     activity_df = inputs.get("activity", pd.DataFrame())
     thresholds_df = inputs.get("citation_fraction", pd.DataFrame())
 
+    pipeline_cfg = config.get("pipeline", {})
+    document_cfg = pipeline_cfg.get("document", {})
+
     logger.info("Starting document post-processing", extra={"rows": len(document_df)})
 
     activity_prepared = _prepare_activity(activity_df)
@@ -209,7 +212,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     normalized = _apply_classification_rules(merged, config)
 
-    review_cfg = config.get("pipeline", {}).get("document", {}).get("review", {})
+    review_cfg = document_cfg.get("review", {})
     base_weight = int(review_cfg.get("base_weight", 2))
     threshold = float(review_cfg.get("threshold", 0.335))
     response_columns = review_cfg.get("response_columns", [])
@@ -229,10 +232,8 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         normalized = normalized.drop(columns=["K_min_significant"])
 
 
-    column_types = config.get("pipeline", {}).get("document", {}).get("type_map", {})
-    column_order = (
-        config.get("pipeline", {}).get("document", {}).get("column_order", [])
-    )
+    column_types = document_cfg.get("type_map", {})
+    column_order = document_cfg.get("column_order", [])
     required_columns: set[str] = set(column_types.keys()) | set(column_order)
     if required_columns:
         normalized = ensure_columns(normalized, required_columns, column_types)
@@ -256,8 +257,6 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
                 .astype("string")
             )
 
-
-    column_order = document_cfg.get("column_order", [])
 
     if column_order:
         typed = ensure_columns(typed, column_order, column_types)
