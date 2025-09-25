@@ -173,6 +173,7 @@ pipeline:
       molecule_type: "Small molecule"
       structure_type: "MOL"
     chirality_reference: 1
+    skeleton_length: 14
     type_map:
       molecule_chembl_id: string
       pref_name: string
