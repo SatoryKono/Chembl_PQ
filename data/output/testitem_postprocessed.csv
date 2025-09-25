@@ -1,21 +1,21 @@
-molecule_chembl_id,pref_name,all_names,molecule_type,structure_type,is_radical,standard_inchi_key,canonical_smiles,skeleton_inchi_key,unknown_chirality,invalid_record
-CHEMBL417915,,(-)-cymserine,Small molecule,MOL,,NKJRRVBTMYRXRB-YANBTOMASA-N,CC(C)c1ccc(NC(=O)Oc2ccc3c(c2)[C@]2(C)CCN(C)C2N3C)cc1,NKJRRVBTMYRXRB,True,False
-CHEMBL296435,(+)-ehna,(+)-ehna,Small molecule,MOL,,IOSAAWHGJUZBOG-WDEREUQCSA-N,CCCCCC[C@H]([C@H](C)O)n1cnc2c(N)ncnc21,IOSAAWHGJUZBOG,False,False
-CHEMBL27559,,(r)-oh-n-propylnoraporphine,Small molecule,MOL,,WZJSIHGOLMMBAL-MRXNPFEDSA-N,CCCN1CCc2cccc3c2[C@H]1Cc1cccc(O)c1-3,WZJSIHGOLMMBAL,False,False
-CHEMBL267447,calanolide a,(+)-calanolide a,Small molecule,MOL,,NIDRYBLTWYFCFV-FMTVUPSXSA-N,CCCc1cc(=O)oc2c3c(c4c(c12)OC(C)(C)C=C4)O[C@H](C)[C@@H](C)[C@@H]3O,NIDRYBLTWYFCFV,False,False
-CHEMBL416715,(r)pk-11195,(r)pk-11195,Small molecule,MOL,,RAVIZVQZGXBOQO-CQSZACIVSA-N,CC[C@@H](C)N(C)C(=O)c1cc2ccccc2c(-c2ccccc2Cl)n1,RAVIZVQZGXBOQO,False,False
-CHEMBL54727,,(-)-phenserine,Small molecule,MOL,,PBHFNBQPZCRWQP-IJHRGXPZSA-N,CN1CC[C@@]2(C)c3cc(OC(=O)Nc4ccccc4)ccc3N(C)C12,PBHFNBQPZCRWQP,True,False
-CHEMBL51697,,(s)-nomifensine,Small molecule,MOL,,XXPANQJNYNUNES-AWEZNQCLSA-N,CN1Cc2c(N)cccc2[C@H](c2ccccc2)C1,XXPANQJNYNUNES,False,False
-CHEMBL284994,,"(1r,4s)-trans-sertraline",Small molecule,MOL,,VGKDLMBJGBXTGI-YVEFUNNKSA-N,CN[C@@H]1CC[C@@H](c2ccc(Cl)c(Cl)c2)c2ccccc21,VGKDLMBJGBXTGI,False,False
-CHEMBL283509,,(+)-arisugacin a,Small molecule,MOL,,MIHBCQWIBJDVPX-JUDWXZBOSA-N,COc1ccc(-c2cc3c(c(=O)o2)C[C@]2(O)[C@@]4(C)C(=O)C=CC(C)(C)[C@]4(O)CC[C@@]2(C)O3)cc1OC,MIHBCQWIBJDVPX,False,False
-CHEMBL268229,,(r)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-RXMQYKEDSA-N,C[C@@H](N)Cc1c[nH]cn1,XNQIOISZPFVUFG,False,False
-CHEMBL49623,"(r,s)-ifenprodil","(r,s)-ifenprodil",Small molecule,MOL,,UYNVMODNBIQBMV-KKSFZXQISA-N,C[C@@H]([C@H](O)c1ccc(O)cc1)N1CCC(Cc2ccccc2)CC1,UYNVMODNBIQBMV,False,False
-CHEMBL11919,,(s)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-YFKPBYRVSA-N,C[C@H](N)Cc1c[nH]cn1,XNQIOISZPFVUFG,False,False
-CHEMBL300143,,(-)-tolserine,Small molecule,MOL,,JGAGHIIOCADQOV-QWAKEFERSA-N,Cc1ccccc1NC(=O)Oc1ccc2c(c1)[C@]1(C)CCN(C)C1N2C,JGAGHIIOCADQOV,True,False
-CHEMBL13378,"(r,s)-ampa","(r,s)-ampa",Small molecule,MOL,,UUDAMDVQRQNNHZ-UHFFFAOYSA-N,Cc1onc(O)c1CC(N)C(=O)O,UUDAMDVQRQNNHZ,True,False
-CHEMBL276815,(s)-ampa,(s)-ampa,Small molecule,MOL,,UUDAMDVQRQNNHZ-YFKPBYRVSA-N,Cc1onc(O)c1C[C@H](N)C(=O)O,UUDAMDVQRQNNHZ,False,False
-CHEMBL46005,,"(2s,2's)-2,2'-carbonylbis(azanediyl)dipentanedioic acid",Small molecule,MOL,,SOAPXKSPJAZNGO-WDSKDSINSA-N,O=C(O)CC[C@H](NC(=O)N[C@@H](CCC(=O)O)C(=O)O)C(=O)O,SOAPXKSPJAZNGO,False,False
-CHEMBL298827,(s)-thiorphan,(s)-thiorphan,Small molecule,MOL,,LJJKNPQAGWVLDQ-SNVBAGLBSA-N,O=C(O)CNC(=O)[C@@H](CS)Cc1ccccc1,LJJKNPQAGWVLDQ,False,False
-CHEMBL66,(+)-taxifolin,"(+)-taxifolin, cianidanol",Small molecule,MOL,,CXQWRCVTCMQVQX-LSDHHAIUSA-N,O=C1c2c(O)cc(O)cc2O[C@H](c2ccc(O)c(O)c2)[C@H]1O,CXQWRCVTCMQVQX,False,False
-CHEMBL24077,(r)-skf-38393,"(r)-skf-38393, (r)-skf-38393",Small molecule,MOL,,JUDKOGFHZYMDMF-CQSZACIVSA-N,Oc1cc2c(cc1O)[C@@H](c1ccccc1)CNCC2,JUDKOGFHZYMDMF,False,False
-CHEMBL14346,"1,2,3,4-tetrahydroisoquinoline","1,2,3,4-tetrahydroisoquinoline, 1,2,3,4-tetrahydro-isoquinoline, 1,2,3,4-tetrahydroisoquinoline",Small molecule,MOL,,UWYZHKAOTLEWKK-UHFFFAOYSA-N,c1ccc2c(c1)CCNC2,UWYZHKAOTLEWKK,False,False
+molecule_chembl_id,pref_name,all_names,standard_inchi_key,canonical_smiles,skeleton_inchi_key,unknown_chirality,invalid_record
+CHEMBL417915,,(-)-cymserine,NKJRRVBTMYRXRB-YANBTOMASA-N,CC(C)c1ccc(NC(=O)Oc2ccc3c(c2)[C@]2(C)CCN(C)C2N3C)cc1,NKJRRVBTMYRXRB,True,False
+CHEMBL296435,(+)-ehna,(+)-ehna,IOSAAWHGJUZBOG-WDEREUQCSA-N,CCCCCC[C@H]([C@H](C)O)n1cnc2c(N)ncnc21,IOSAAWHGJUZBOG,False,False
+CHEMBL27559,,(r)-oh-n-propylnoraporphine,WZJSIHGOLMMBAL-MRXNPFEDSA-N,CCCN1CCc2cccc3c2[C@H]1Cc1cccc(O)c1-3,WZJSIHGOLMMBAL,False,False
+CHEMBL267447,calanolide a,(+)-calanolide a,NIDRYBLTWYFCFV-FMTVUPSXSA-N,CCCc1cc(=O)oc2c3c(c4c(c12)OC(C)(C)C=C4)O[C@H](C)[C@@H](C)[C@@H]3O,NIDRYBLTWYFCFV,False,False
+CHEMBL416715,(r)pk-11195,(r)pk-11195,RAVIZVQZGXBOQO-CQSZACIVSA-N,CC[C@@H](C)N(C)C(=O)c1cc2ccccc2c(-c2ccccc2Cl)n1,RAVIZVQZGXBOQO,False,False
+CHEMBL54727,,(-)-phenserine,PBHFNBQPZCRWQP-IJHRGXPZSA-N,CN1CC[C@@]2(C)c3cc(OC(=O)Nc4ccccc4)ccc3N(C)C12,PBHFNBQPZCRWQP,True,False
+CHEMBL51697,,(s)-nomifensine,XXPANQJNYNUNES-AWEZNQCLSA-N,CN1Cc2c(N)cccc2[C@H](c2ccccc2)C1,XXPANQJNYNUNES,False,False
+CHEMBL284994,,"(1r,4s)-trans-sertraline",VGKDLMBJGBXTGI-YVEFUNNKSA-N,CN[C@@H]1CC[C@@H](c2ccc(Cl)c(Cl)c2)c2ccccc21,VGKDLMBJGBXTGI,False,False
+CHEMBL283509,,(+)-arisugacin a,MIHBCQWIBJDVPX-JUDWXZBOSA-N,COc1ccc(-c2cc3c(c(=O)o2)C[C@]2(O)[C@@]4(C)C(=O)C=CC(C)(C)[C@]4(O)CC[C@@]2(C)O3)cc1OC,MIHBCQWIBJDVPX,False,False
+CHEMBL268229,,(r)-alpha-methylhistamine,XNQIOISZPFVUFG-RXMQYKEDSA-N,C[C@@H](N)Cc1c[nH]cn1,XNQIOISZPFVUFG,False,False
+CHEMBL49623,"(r,s)-ifenprodil","(r,s)-ifenprodil",UYNVMODNBIQBMV-KKSFZXQISA-N,C[C@@H]([C@H](O)c1ccc(O)cc1)N1CCC(Cc2ccccc2)CC1,UYNVMODNBIQBMV,False,False
+CHEMBL11919,,(s)-alpha-methylhistamine,XNQIOISZPFVUFG-YFKPBYRVSA-N,C[C@H](N)Cc1c[nH]cn1,XNQIOISZPFVUFG,False,False
+CHEMBL300143,,(-)-tolserine,JGAGHIIOCADQOV-QWAKEFERSA-N,Cc1ccccc1NC(=O)Oc1ccc2c(c1)[C@]1(C)CCN(C)C1N2C,JGAGHIIOCADQOV,True,False
+CHEMBL13378,"(r,s)-ampa","(r,s)-ampa",UUDAMDVQRQNNHZ-UHFFFAOYSA-N,Cc1onc(O)c1CC(N)C(=O)O,UUDAMDVQRQNNHZ,True,False
+CHEMBL276815,(s)-ampa,(s)-ampa,UUDAMDVQRQNNHZ-YFKPBYRVSA-N,Cc1onc(O)c1C[C@H](N)C(=O)O,UUDAMDVQRQNNHZ,False,False
+CHEMBL46005,,"(2s,2's)-2,2'-carbonylbis(azanediyl)dipentanedioic acid",SOAPXKSPJAZNGO-WDSKDSINSA-N,O=C(O)CC[C@H](NC(=O)N[C@@H](CCC(=O)O)C(=O)O)C(=O)O,SOAPXKSPJAZNGO,False,False
+CHEMBL298827,(s)-thiorphan,(s)-thiorphan,LJJKNPQAGWVLDQ-SNVBAGLBSA-N,O=C(O)CNC(=O)[C@@H](CS)Cc1ccccc1,LJJKNPQAGWVLDQ,False,False
+CHEMBL66,(+)-taxifolin,"(+)-taxifolin, cianidanol",CXQWRCVTCMQVQX-LSDHHAIUSA-N,O=C1c2c(O)cc(O)cc2O[C@H](c2ccc(O)c(O)c2)[C@H]1O,CXQWRCVTCMQVQX,False,False
+CHEMBL24077,(r)-skf-38393,"(r)-skf-38393, (r)-skf-38393",JUDKOGFHZYMDMF-CQSZACIVSA-N,Oc1cc2c(cc1O)[C@@H](c1ccccc1)CNCC2,JUDKOGFHZYMDMF,False,False
+CHEMBL14346,"1,2,3,4-tetrahydroisoquinoline","1,2,3,4-tetrahydroisoquinoline, 1,2,3,4-tetrahydro-isoquinoline, 1,2,3,4-tetrahydroisoquinoline",UWYZHKAOTLEWKK-UHFFFAOYSA-N,c1ccc2c(c1)CCNC2,UWYZHKAOTLEWKK,False,False
