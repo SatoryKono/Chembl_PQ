@@ -107,10 +107,83 @@ let
     ],
     ColumnCatalog = [
       ProteinClassification = "protein_classifications"
+    ],
+    ColumnSets = [
+      Document = [
+        Reference = [
+          SourceKeys = {"PMID"},
+          TargetKeys = {"pubmed_id"},
+          NestedColumn = "DocumentReference",
+          ExpandColumns = {"classification", "document_contains_external_links", "is_experimental_doc"},
+          ExpandedNames = {"review", "document_contains_external_links", "is_experimental_doc"}
+        ],
+        Metrics = [
+          SourceColumn = "ChEMBL.document_chembl_id",
+          SourceKeys = {"ChEMBL.document_chembl_id"},
+          TargetKeys = {"document_chembl_id"},
+          NestedColumn = "DocumentMetrics",
+          ExpandColumns = {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
+        ],
+        Review = [
+          LegacyColumn = "review",
+          ReplacementColumn = "updated_review",
+          ExperimentalColumn = "is_experimental",
+          ResponseCountColumn = "n_responces",
+          PublicationColumns = [
+            PubMed = "publication_type",
+            Scholar = "scholar.PublicationTypes",
+            OpenAlex = "OpenAlex.publication_type",
+            OpenAlexCrossref = "OpenAlex.crossref_type",
+            OpenAlexGenre = "OpenAlex.Genre",
+            Crossref = "crossref.publication_type"
+          ],
+          ResponseColumns = {"publication_type", "scholar.PublicationTypes", "OpenAlex.publication_type", "OpenAlex.crossref_type"},
+          Signals = [BaseWeight = 2, Threshold = 0.335]
+        ],
+        Completed = [
+          Target = "completed",
+          CompletedFields = {"completed.year", "completed.month", "completed.day"},
+          RevisedFields = {"revised.year", "revised.month", "revised.day"},
+          Digits = {4, 2, 2},
+          ChemblYearField = "ChEMBL.year",
+          DefaultValue = "0000-00-00"
+        ],
+        SortOrder = [
+          Target = "sort_order",
+          Fields = [Issn = "ISSN", Completed = "completed", PMID = "PMID"],
+          Defaults = [Issn = "unknown", Completed = "0000-00-00", PMID = "00000000"],
+          PadLengths = [PMID = 8],
+          Separator = ":"
+        ],
+        VerboseColumns = {
+          "doi_same_count",
+          "invalid_doi",
+          "reason",
+          "consensus_doi",
+          "consensus_support",
+          "pm_doi_norm",
+          "pm_valid",
+          "chembl_doi_norm",
+          "chembl_valid",
+          "scholar_doi_norm",
+          "scholar_valid",
+          "crossref_doi_norm",
+          "crossref_valid",
+          "openalex_doi_norm",
+          "openalex_valid",
+          "pm_doi_raw",
+          "chembl_doi_raw",
+          "scholar_doi_raw",
+          "crossref_doi_raw",
+          "openalex_doi_raw",
+          "peers_valid_distinct"
+        ]
+      ]
     ]
   ],
 
   ColumnCatalog = Record.Field(Parameters, "ColumnCatalog"),
+  ColumnSets = Record.Field(Parameters, "ColumnSets"),
   ProteinClassificationColumnName = Record.Field(ColumnCatalog, "ProteinClassification"),
   TargetColumnDrops = List.RemoveNulls({ProteinClassificationColumnName}),
 
@@ -545,6 +618,61 @@ let
           paired = List.Transform(positions, each {truncatedFirst{_}, truncatedSecond{_}})
         in
           paired,
+      buildDateCandidate = (row as record, columns as list, digits as list) as record =>
+        let
+          zipped = zipLists(columns, digits),
+          parts =
+            List.Transform(
+              zipped,
+              (pair as list) =>
+                let
+                  columnName = pair{0},
+                  width = pair{1},
+                  rawValue = Record.FieldOrDefault(row, columnName, null),
+                  normalized = normalizeWhitespace(rawValue, false),
+                  zeroToken = Text.Repeat("0", width),
+                  padded = if normalized = null or normalized = "" then zeroToken else Text.PadStart(normalized, width, "0"),
+                  isZero = padded = zeroToken
+                in
+                  [Value = padded, IsZero = isZero]
+            ),
+          value = Text.Combine(List.Transform(parts, each _[Value]), "-"),
+          isComplete = List.AllTrue(List.Transform(parts, each not _[IsZero]))
+        in
+          [Value = value, IsComplete = isComplete],
+      buildSortKey = (
+          row as record,
+          fieldMapping as record,
+          defaults as record,
+          optional padLengths as nullable record,
+          optional separator as nullable text
+        ) as text =>
+        let
+          fields = Record.FieldNames(fieldMapping),
+          sep = if separator = null then ":" else separator,
+          padSpec = if padLengths = null then [] else padLengths,
+          values =
+            List.Transform(
+              fields,
+              (key as text) =>
+                let
+                  columnName = Record.Field(fieldMapping, key),
+                  rawValue = Record.FieldOrDefault(row, columnName, null),
+                  normalized = normalizeWhitespace(rawValue, false),
+                  defaultValue = Record.FieldOrDefault(defaults, key, ""),
+                  effective = if normalized = null or normalized = "" then defaultValue else normalized,
+                  padLength =
+                    if Value.Is(padSpec, type record) and Record.HasFields(padSpec, key) then
+                      Record.Field(padSpec, key)
+                    else
+                      null,
+                  textValue = toText(effective),
+                  padded = if padLength = null then textValue else Text.PadStart(textValue, padLength, "0")
+                in
+                  padded
+            )
+        in
+          Text.Combine(values, sep),
       promoteHeadersSafe = (tbl as table, optional context as nullable record) as table =>
         let
           raiseError = (reason as any) =>
@@ -862,7 +990,9 @@ let
         SplitPipeList = splitPipeList,
         ReplaceTextInColumn = replaceTextInColumn,
         ZipLists = zipLists,
-        CoalesceColumns = coalesceColumns
+        CoalesceColumns = coalesceColumns,
+        BuildDateCandidate = buildDateCandidate,
+        BuildSortKey = buildSortKey
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -886,6 +1016,8 @@ let
   SplitPipeList = Helpers[SplitPipeList],
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   ZipLists = Helpers[ZipLists],
+  BuildDateCandidate = Helpers[BuildDateCandidate],
+  BuildSortKey = Helpers[BuildSortKey],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, NormalizeColumnList(columns), MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
@@ -1910,85 +2042,51 @@ let
             MissingField.Ignore
           ),
           qualifiersFilled = Helpers[CoalesceColumns](renamedDraft, "PubMed.MeSH_Qualifiers", {"OpenAlex.MeSH.qualifiers"}, type text),
-          withCompleted = Table.AddColumn(
-            qualifiersFilled,
-            "completed",
-            each
-              let
-                getComponent = (fieldName as text, digits as number) as text =>
-                  let
-                    rawValue = Record.FieldOrDefault(_, fieldName, null),
-                    normalized = NormalizeWhitespace(rawValue, false)
-                  in
-                    if normalized = null or normalized = "" then Text.Repeat("0", digits) else Text.PadStart(normalized, digits, "0"),
-                completedYear = getComponent("completed.year", 4),
-                completedMonth = getComponent("completed.month", 2),
-                completedDay = getComponent("completed.day", 2),
-                revisedYear = getComponent("revised.year", 4),
-                revisedMonth = getComponent("revised.month", 2),
-                revisedDay = getComponent("revised.day", 2),
-                hasCompleted = (completedYear <> "0000") and (completedMonth <> "00") and (completedDay <> "00"),
-                hasRevised = (revisedYear <> "0000") and (revisedMonth <> "00") and (revisedDay <> "00"),
-                chemblYearRaw = Record.FieldOrDefault(_, "ChEMBL.year", null),
-                chemblYearNorm = NormalizeWhitespace(chemblYearRaw, false),
-                chemblDate = if chemblYearNorm = null or chemblYearNorm = "" then null else Text.PadStart(chemblYearNorm, 4, "0") & "-00-00",
-                completedDate = if hasCompleted then completedYear & "-" & completedMonth & "-" & completedDay else null,
-                revisedDate = if hasRevised then revisedYear & "-" & revisedMonth & "-" & revisedDay else null,
-                fallbackDate = if revisedDate <> null then revisedDate else chemblDate,
-                finalDate = if completedDate <> null then completedDate else fallbackDate
-              in
-                if finalDate <> null then finalDate else "0000-00-00",
-            type text
-          ),
-          withSort = Table.AddColumn(
-            withCompleted,
-            "sort_order",
-            each
-              let
-                issnRaw = Record.FieldOrDefault(_, "ISSN", null),
-                issnValue =
-                  let
-                    normalized = NormalizeWhitespace(issnRaw, false)
-                  in
-                    if normalized = null or normalized = "" then "unknown" else normalized,
-                completedValue =
-                  let
-                    normalized = NormalizeWhitespace(Record.FieldOrDefault(_, "completed", null), false)
-                  in
-                    if normalized = null or normalized = "" then "0000-00-00" else normalized,
-                pmidText = NormalizeWhitespace(Record.FieldOrDefault(_, "PMID", null), false),
-                pmidValue = if pmidText = null or pmidText = "" then "00000000" else Text.PadStart(pmidText, 8, "0")
-              in
-                issnValue & ":" & completedValue & ":" & pmidValue,
-            type text
-          ),
-          withoutVerbose = Table.RemoveColumns(
-            withSort,
-            {
-              "doi_same_count",
-              "invalid_doi",
-              "reason",
-              "consensus_doi",
-              "consensus_support",
-              "pm_doi_norm",
-              "pm_valid",
-              "chembl_doi_norm",
-              "chembl_valid",
-              "scholar_doi_norm",
-              "scholar_valid",
-              "crossref_doi_norm",
-              "crossref_valid",
-              "openalex_doi_norm",
-              "openalex_valid",
-              "pm_doi_raw",
-              "chembl_doi_raw",
-              "scholar_doi_raw",
-              "crossref_doi_raw",
-              "openalex_doi_raw",
-              "peers_valid_distinct"
-            },
-            MissingField.Ignore
-          ),
+          withCompleted =
+            Table.AddColumn(
+              qualifiersFilled,
+              completionTarget,
+              each
+                let
+                  completedCandidate = Helpers[BuildDateCandidate](_, completionSpec[CompletedFields], completionDigits),
+                  revisedCandidate = Helpers[BuildDateCandidate](_, completionSpec[RevisedFields], completionDigits),
+                  chemblYearRaw = Record.FieldOrDefault(_, completionSpec[ChemblYearField], null),
+                  chemblYearNorm = NormalizeWhitespace(chemblYearRaw, false),
+                  yearWidth = completionDigits{0},
+                  chemblDate =
+                    if chemblYearNorm = null or chemblYearNorm = "" then
+                      null
+                    else
+                      Text.PadStart(chemblYearNorm, yearWidth, "0") & "-00-00",
+                  fallbackDate =
+                    if revisedCandidate[IsComplete] then
+                      revisedCandidate[Value]
+                    else
+                      chemblDate,
+                  finalDate =
+                    if completedCandidate[IsComplete] then
+                      completedCandidate[Value]
+                    else
+                      fallbackDate
+                in
+                  if finalDate <> null then finalDate else completionSpec[DefaultValue],
+              type text
+            ),
+          withSort =
+            Table.AddColumn(
+              withCompleted,
+              sortTarget,
+              each
+                Helpers[BuildSortKey](
+                  _,
+                  sortSpec[Fields],
+                  sortSpec[Defaults],
+                  sortSpec[PadLengths],
+                  sortSpec[Separator]
+                ),
+              type text
+            ),
+          withoutVerbose = Table.RemoveColumns(withSort, verboseColumns, MissingField.Ignore),
           ordered = Table.ReorderColumns(withoutVerbose, List.Sort(Table.ColumnNames(withoutVerbose)))
         in
           ordered,
@@ -2006,42 +2104,69 @@ let
           documentSource = DocumentInput[MergeSources](Data[Document_out]),
           validatedRows = Validation[ValidateAll](documentSource),
           validationFrame = BuildValidationFrame(validatedRows),
+          documentColumns = ColumnSets[Document],
+          referenceSpec = documentColumns[Reference],
+          metricsSpec = documentColumns[Metrics],
+          reviewSpec = documentColumns[Review],
+          completionSpec = documentColumns[Completed],
+          sortSpec = documentColumns[SortOrder],
+          verboseColumns = documentColumns[VerboseColumns],
+          reviewPublicationColumns = reviewSpec[PublicationColumns],
+          responseColumns = reviewSpec[ResponseColumns],
+          reviewSignals = reviewSpec[Signals],
+          referenceExpandedNames = referenceSpec[ExpandedNames],
+          metricsColumns = metricsSpec[ExpandColumns],
+          reviewCountColumn = reviewSpec[ResponseCountColumn],
+          reviewColumn = reviewSpec[LegacyColumn],
+          reviewReplacementColumn = reviewSpec[ReplacementColumn],
+          experimentalColumn = reviewSpec[ExperimentalColumn],
+          completionTarget = completionSpec[Target],
+          completionDigits = completionSpec[Digits],
+          sortTarget = sortSpec[Target],
+          referenceReviewColumn = referenceExpandedNames{0},
+          referenceLinksColumn = referenceExpandedNames{1},
+          referenceExperimentalDocColumn = referenceExpandedNames{2},
+          metricActivityColumn = metricsColumns{0},
+          metricCitationsColumn = metricsColumns{1},
+          metricAssayColumn = metricsColumns{2},
+          metricTestitemColumn = metricsColumns{3},
+          metricSignificantColumn = metricsColumns{4},
           pmidPrepared = Helpers[TransformColumnTypesSafe](validationFrame, {{"PMID", type text}}),
           referenceTable = citations[get_reference](),
           withReference = Table.NestedJoin(
             pmidPrepared,
-            {"PMID"},
+            referenceSpec[SourceKeys],
             referenceTable,
-            {"pubmed_id"},
-            "DocumentReference",
+            referenceSpec[TargetKeys],
+            referenceSpec[NestedColumn],
             JoinKind.LeftOuter
           ),
           expandedReference = ExpandTableColumnSafe(
             withReference,
-            "DocumentReference",
-            {"classification", "document_contains_external_links", "is_experimental_doc"},
-            {"review", "document_contains_external_links", "is_experimental_doc"}
+            referenceSpec[NestedColumn],
+            referenceSpec[ExpandColumns],
+            referenceSpec[ExpandedNames]
           ),
           reviewSanitized =
             let
-              replaced = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {"review"}),
-              typedNumber = Helpers[TransformColumnTypesSafe](replaced, {{"review", Int64.Type}})
+              replaced = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {reviewColumn}),
+              typedNumber = Helpers[TransformColumnTypesSafe](replaced, {{reviewColumn, Int64.Type}})
             in
-              Helpers[TransformColumnTypesSafe](typedNumber, {{"review", type logical}}),
-          ensuredDocumentId = EnsureColumn(reviewSanitized, "ChEMBL.document_chembl_id", null, type text),
+              Helpers[TransformColumnTypesSafe](typedNumber, {{reviewColumn, type logical}}),
+          ensuredDocumentId = EnsureColumn(reviewSanitized, metricsSpec[SourceColumn], null, type text),
           metricsTable = citations[get_citations_fraction](),
           withMetrics = Table.NestedJoin(
             ensuredDocumentId,
-            {"ChEMBL.document_chembl_id"},
+            metricsSpec[SourceKeys],
             metricsTable,
-            {"document_chembl_id"},
-            "DocumentMetrics",
+            metricsSpec[TargetKeys],
+            metricsSpec[NestedColumn],
             JoinKind.LeftOuter
           ),
           expandedMetrics = ExpandTableColumnSafe(
             withMetrics,
-            "DocumentMetrics",
-            {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
+            metricsSpec[NestedColumn],
+            metricsSpec[ExpandColumns]
           ),
           dropJournalish = {"journal-article", "journal article", "article", "journal"},
           dropSupportish =
@@ -2070,12 +2195,12 @@ let
           aliasCrossrefPubType = [#"journal-article" = null, article = null],
           classificationConfigs =
             {
-              [Column = "publication_type", Alias = aliasPublicationType, Drop = List.Union({dropJournalish, dropSupportish, {""}})],
-              [Column = "scholar.PublicationTypes", Alias = aliasScholar, Drop = {"journalarticle", "study", ""}],
-              [Column = "OpenAlex.publication_type", Alias = aliasOpenAlexPubType, Drop = {"0", "article", "journal", "journal-article", "journal article", ""}],
-              [Column = "OpenAlex.crossref_type", Alias = aliasOpenAlexXrefType, Drop = {"journal-article", "article", ""}],
-              [Column = "OpenAlex.Genre", Alias = aliasOpenAlexGenre, Drop = {"0", "article", ""}],
-              [Column = "crossref.publication_type", Alias = aliasCrossrefPubType, Drop = {"journal-article", "article", ""}]
+              [Column = reviewPublicationColumns[PubMed], Alias = aliasPublicationType, Drop = List.Union({dropJournalish, dropSupportish, {""}})],
+              [Column = reviewPublicationColumns[Scholar], Alias = aliasScholar, Drop = {"journalarticle", "study", ""}],
+              [Column = reviewPublicationColumns[OpenAlex], Alias = aliasOpenAlexPubType, Drop = {"0", "article", "journal", "journal-article", "journal article", ""}],
+              [Column = reviewPublicationColumns[OpenAlexCrossref], Alias = aliasOpenAlexXrefType, Drop = {"journal-article", "article", ""}],
+              [Column = reviewPublicationColumns[OpenAlexGenre], Alias = aliasOpenAlexGenre, Drop = {"0", "article", ""}],
+              [Column = reviewPublicationColumns[Crossref], Alias = aliasCrossrefPubType, Drop = {"journal-article", "article", ""}]
             },
           classificationNormalized =
             List.Accumulate(
@@ -2087,12 +2212,10 @@ let
                   {{cfg[Column], each CleanPipe(_, cfg[Alias], cfg[Drop], false), type text}}
                 )
             ),
-          reviewSignals = [BaseWeight = 2, Threshold = 0.335],
-          responseColumns = {"publication_type", "scholar.PublicationTypes", "OpenAlex.publication_type", "OpenAlex.crossref_type"},
           withResponseCount =
             Table.AddColumn(
               classificationNormalized,
-              "n_responces",
+              reviewCountColumn,
               each
                 let
                   currentRow = _,
@@ -2113,31 +2236,37 @@ let
           withReview =
             Table.AddColumn(
               withResponseCount,
-              "updated_review",
+              reviewReplacementColumn,
               each
                 let
-                  pubType = Text.Lower(ToText(Record.FieldOrDefault(_, "publication_type", ""))),
-                  scholarType = Text.Lower(ToText(Record.FieldOrDefault(_, "scholar.PublicationTypes", ""))),
-                  openAlexType = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.publication_type", ""))),
-                  openAlexXref = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.crossref_type", ""))),
-                  baseReview = Record.FieldOrDefault(_, "review", false),
+                  pubType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewPublicationColumns[PubMed], ""))),
+                  scholarType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewPublicationColumns[Scholar], ""))),
+                  openAlexType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewPublicationColumns[OpenAlex], ""))),
+                  openAlexXref = Text.Lower(ToText(Record.FieldOrDefault(_, reviewPublicationColumns[OpenAlexCrossref], ""))),
+                  baseReview = Record.FieldOrDefault(_, reviewColumn, false),
                   voteScore =
                     Number.From(Text.Contains(pubType, "review")) +
                     Number.From(scholarType = "review") +
                     Number.From(openAlexType = "review") +
                     Number.From(openAlexXref = "review") +
                     Number.From(baseReview) * reviewSignals[BaseWeight],
-                  normalizedScore = voteScore / Record.Field(_, "n_responces")
+                  normalizedScore = voteScore / Record.Field(_, reviewCountColumn)
                 in
                   baseReview or normalizedScore > reviewSignals[Threshold],
               type logical
             ),
           reviewFinal =
             let
-              withoutLegacy = RemoveColumnsSafe(withReview, {"review"})
+              withoutLegacy = RemoveColumnsSafe(withReview, {reviewColumn})
             in
-              RenameColumnsSafe(withoutLegacy, {{"updated_review", "review"}}),
-          withExperimentalFlag = Table.AddColumn(reviewFinal, "is_experimental", each not [review], type logical),
+              RenameColumnsSafe(withoutLegacy, {{reviewReplacementColumn, reviewColumn}}),
+          withExperimentalFlag =
+            Table.AddColumn(
+              reviewFinal,
+              experimentalColumn,
+              each not Record.Field(_, reviewColumn),
+              type logical
+            ),
           documentSchema = [
             Rename = {
               {"_title", "title"},
@@ -2151,8 +2280,8 @@ let
             Type = {
               {"PMID", Int64.Type},
               {"doi", type text},
-              {"sort_order", type text},
-              {"completed", type text},
+              {sortTarget, type text},
+              {completionTarget, type text},
               {"invalid_record", type logical},
               {"title", type text},
               {"abstract", type text},
@@ -2162,28 +2291,28 @@ let
               {"MeSH.qualifiers", type text},
               {"chemical_list", type text},
               {"ChEMBL.document_chembl_id", type text},
-              {"PubMed.publication_type", type text},
-              {"scholar.PublicationTypes", type text},
-              {"OpenAlex.publication_type", type text},
-              {"OpenAlex.crossref_type", type text},
-              {"OpenAlex.Genre", type text},
-              {"crossref.publication_type", type text},
-              {"significant_citations_fraction", type logical},
-              {"document_contains_external_links", type logical},
-              {"is_experimental_doc", type logical},
-              {"n_activity", Int64.Type},
-              {"citations", Int64.Type},
-              {"n_assay", Int64.Type},
-              {"n_testitem", Int64.Type},
-              {"n_responces", Int64.Type},
-              {"review", type logical},
-              {"is_experimental", type logical}
+              {reviewPublicationColumns[PubMed], type text},
+              {reviewPublicationColumns[Scholar], type text},
+              {reviewPublicationColumns[OpenAlex], type text},
+              {reviewPublicationColumns[OpenAlexCrossref], type text},
+              {reviewPublicationColumns[OpenAlexGenre], type text},
+              {reviewPublicationColumns[Crossref], type text},
+              {metricSignificantColumn, type logical},
+              {referenceLinksColumn, type logical},
+              {referenceExperimentalDocColumn, type logical},
+              {metricActivityColumn, Int64.Type},
+              {metricCitationsColumn, Int64.Type},
+              {metricAssayColumn, Int64.Type},
+              {metricTestitemColumn, Int64.Type},
+              {reviewCountColumn, Int64.Type},
+              {reviewColumn, type logical},
+              {experimentalColumn, type logical}
             },
             Order = {
               "PMID",
               "doi",
-              "sort_order",
-              "completed",
+              sortTarget,
+              completionTarget,
               "invalid_record",
               "title",
               "abstract",
@@ -2193,22 +2322,22 @@ let
               "MeSH.qualifiers",
               "chemical_list",
               "ChEMBL.document_chembl_id",
-              "PubMed.publication_type",
-              "scholar.PublicationTypes",
-              "OpenAlex.publication_type",
-              "OpenAlex.crossref_type",
-              "OpenAlex.Genre",
-              "crossref.publication_type",
-              "significant_citations_fraction",
-              "document_contains_external_links",
-              "is_experimental_doc",
-              "n_activity",
-              "citations",
-              "n_assay",
-              "n_testitem",
-              "n_responces",
-              "review",
-              "is_experimental"
+              reviewPublicationColumns[PubMed],
+              reviewPublicationColumns[Scholar],
+              reviewPublicationColumns[OpenAlex],
+              reviewPublicationColumns[OpenAlexCrossref],
+              reviewPublicationColumns[OpenAlexGenre],
+              reviewPublicationColumns[Crossref],
+              metricSignificantColumn,
+              referenceLinksColumn,
+              referenceExperimentalDocColumn,
+              metricActivityColumn,
+              metricCitationsColumn,
+              metricAssayColumn,
+              metricTestitemColumn,
+              reviewCountColumn,
+              reviewColumn,
+              experimentalColumn
             }
           ],
           ApplyDocumentSchema = (tbl as table) as table =>
