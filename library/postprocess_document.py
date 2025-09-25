@@ -662,6 +662,19 @@ def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             sort=False,
         )
     return result
+
+
+def _resolve_document_id_column(document_df: pd.DataFrame) -> Optional[str]:
+    """Find the best available document identifier column."""
+
+    for candidate in (
+        "ChEMBL.document_chembl_id",
+        "document_chembl_id",
+        "document_id",
+    ):
+        if candidate in document_df.columns:
+            return candidate
+    return None
 def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
     pub_type = to_text(row.get("PubMed.publication_type", ""))
     scholar_type = to_text(row.get("scholar.PublicationTypes", ""))
@@ -719,13 +732,30 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     activity_prepared = _prepare_activity(activity_df)
     aggregates = _aggregate_activity(activity_prepared, thresholds_df)
 
-    merged = document_df.merge(
-        aggregates,
-        left_on="ChEMBL.document_chembl_id",
-        right_on="document_chembl_id",
-        how="left",
-    )
-    merged = merged.drop(columns=["document_chembl_id"], errors="ignore")
+    document_id_column = _resolve_document_id_column(document_df)
+    if document_id_column is None:
+        logger.warning("Document identifier column is missing; skipping activity merge")
+        merged = document_df.copy()
+    else:
+        aggregates_key = "document_chembl_id"
+        if (
+            document_id_column != aggregates_key
+            and aggregates_key in aggregates.columns
+        ):
+            aggregates = aggregates.rename(
+                columns={aggregates_key: document_id_column}
+            )
+            aggregates_key = document_id_column
+
+        merged = document_df.merge(
+            aggregates,
+            left_on=document_id_column,
+            right_on=aggregates_key,
+            how="left",
+        )
+
+        if document_id_column != "document_chembl_id":
+            merged = merged.drop(columns=["document_chembl_id"], errors="ignore")
 
     for column in ("n_activity", "citations", "n_assay", "n_testitem"):
         if column in merged.columns:
