@@ -26,12 +26,20 @@ def main() -> None:
     config = load_config(config_path)
 
     document_df = read_csv("document_csv", config)
+    document_out_df = read_csv("document_csv_out", config)
+    document_ref_df = read_csv("document_csv", config)
     activity_df = read_csv("activity_csv", config)
     citation_df = read_csv("citation_fraction_csv", config)
 
     result = run_document(
         {
             "document": document_df,
+            "activity": activity_df,
+            "citation_fraction": citation_df,
+        },
+        {
+            "document_out": document_out_df,
+            "document_reference": document_ref_df,
             "activity": activity_df,
             "citation_fraction": citation_df,
         },
