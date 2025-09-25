@@ -54,19 +54,45 @@ def _build_path(path_key: str, config: Dict[str, Any]) -> Path:
     return Path(rel_path)
 
 
-def _read_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
+def _encoding_candidates(io_cfg: Dict[str, Any]) -> list[str]:
+    primary = io_cfg.get("encoding_in", "utf8")
+    fallbacks_cfg = io_cfg.get("encoding_fallbacks")
+    if fallbacks_cfg is None:
+        candidates = [primary, "cp1252", "latin1"]
+    else:
+        if isinstance(fallbacks_cfg, str):
+            fallback_list = [fallbacks_cfg]
+        else:
+            fallback_list = list(fallbacks_cfg)
+        candidates = [primary, *fallback_list]
+    seen: set[str] = set()
+    unique_candidates: list[str] = []
+    for encoding in candidates:
+        if not encoding:
+            continue
+        if encoding in seen:
+            continue
+        seen.add(encoding)
+        unique_candidates.append(encoding)
+    return unique_candidates
+
+
+def _read_kwargs(config: Dict[str, Any], *, encoding: str) -> Dict[str, Any]:
     io_cfg = config.get("io", {})
     quoting = io_cfg.get("quoting", "minimal").lower()
     if quoting not in _QUOTING_MAP:
         raise LoaderError(f"Unsupported quoting option: {quoting}")
     kwargs: Dict[str, Any] = {
-        "encoding": io_cfg.get("encoding_in", "utf8"),
+        "encoding": encoding,
         "sep": io_cfg.get("delimiter", ","),
         "na_values": io_cfg.get("na_values", ["", "NA", "null", "None"]),
         "keep_default_na": False,
         "dtype": None,
         "low_memory": False,
     }
+    encoding_errors = io_cfg.get("encoding_errors")
+    if encoding_errors:
+        kwargs["encoding_errors"] = encoding_errors
     kwargs["quoting"] = _QUOTING_MAP[quoting]
     return kwargs
 
@@ -75,18 +101,46 @@ def read_csv(path_key: str, config: Dict[str, Any]) -> pd.DataFrame:
     """Read a CSV identified by *path_key* using *config* options."""
 
     path = _build_path(path_key, config)
-    kwargs = _read_kwargs(config)
+    io_cfg = config.get("io", {})
+    encodings = _encoding_candidates(io_cfg)
     source_kind = config.get("source", {}).get("kind", "file").lower()
     logger.info("Loading CSV", extra={"path_key": path_key, "resolved_path": str(path)})
+
+    last_error: UnicodeDecodeError | None = None
 
     if source_kind == "file":
         if not path.exists():
             raise LoaderError(f"File not found: {path}")
-        return pd.read_csv(path, **kwargs)
+        for encoding in encodings:
+            try:
+                kwargs = _read_kwargs(config, encoding=encoding)
+                return pd.read_csv(path, **kwargs)
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                logger.warning(
+                    "Failed to decode CSV",
+                    extra={
+                        "path_key": path_key,
+                        "resolved_path": str(path),
+                        "encoding": encoding,
+                    },
+                )
+        assert last_error is not None  # for type checkers
+        raise last_error
 
     if source_kind == "http":
         full_url = os.path.join(str(path))
-        return pd.read_csv(full_url, **kwargs)
+        for encoding in encodings:
+            try:
+                kwargs = _read_kwargs(config, encoding=encoding)
+                return pd.read_csv(full_url, **kwargs)
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                logger.warning(
+                    "Failed to decode CSV", extra={"url": full_url, "encoding": encoding}
+                )
+        assert last_error is not None
+        raise last_error
 
     if source_kind == "sharepoint":
         # Actual SharePoint access is out of scope for unit tests.
