@@ -17,6 +17,8 @@ Columns, ordering and data types are enforced by ``pipeline.*.type_map`` and
 * Primary key: ``molecule_chembl_id``.
 * Enrichments: ``invalid_record`` (quality flag driven by the config rules).
 * ``unknown_chirality`` converts the Power Query logic to boolean flags.
+* ``canonical_smiles`` is sourced directly from the raw ``testitem_csv`` for
+  downstream structure matching.
 
 ## Assay
 

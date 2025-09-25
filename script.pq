@@ -2347,6 +2347,7 @@ let
           sourceSchema = {
             {"molecule_chembl_id", type text},
             {"pref_name", type text},
+            {"molecule_structures.canonical_smiles", type text},
 
             {"molecule_type", type text},
             {"structure_type", type text},
@@ -2387,13 +2388,21 @@ let
             {{"synonyms", type text}, {"all_names", type text}, {"pref_name", type text}, {"unknown_chirality", type logical}}
           ),
           withDocumentId = EnsureColumn(textColumnsTyped, "document_chembl_id", null, type text),
+          canonicalSource = "molecule_structures.canonical_smiles",
+          withCanonicalSource = EnsureColumn(withDocumentId, canonicalSource, null, type nullable text),
+          withCanonical = Table.AddColumn(
+            withCanonicalSource,
+            "canonical_smiles",
+            each Record.FieldOrDefault(_, canonicalSource, null),
+            type nullable text
+          ),
           documentAggRaw = citations[get_testitem_agg](),
           documentAggTyped = TransformColumnTypesSafe(
             documentAggRaw,
             {{"document_chembl_id", type text}, {"n_testitem", Int64.Type}}
           ),
           withAggregates = JoinAndExpand(
-            withDocumentId,
+            withCanonical,
             {"document_chembl_id"},
             documentAggTyped,
             {"document_chembl_id"},
@@ -2418,22 +2427,25 @@ let
             ),
             type logical
           ),
+          columnsToDrop = {canonicalSource},
+          sanitizedColumns = RemoveColumnsSafe(withInvalidFlag, columnsToDrop),
           columnOrder = {
             "molecule_chembl_id",
             "pref_name",
             "all_names",
-            
+
             "molecule_type",
             "structure_type",
             "is_radical",
             "standard_inchi_key",
+            "canonical_smiles",
             "skeleton_inchi_key",
             "unknown_chirality",
             "document_chembl_id",
             "document_testitem_total",
             "invalid_record"
           },
-          finalTestitem = Table.ReorderColumns(withInvalidFlag, columnOrder, MissingField.Ignore)
+          finalTestitem = Table.ReorderColumns(sanitizedColumns, columnOrder, MissingField.Ignore)
         in
           finalTestitem,
 

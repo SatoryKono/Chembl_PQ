@@ -85,6 +85,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         "molecule_chembl_id": "string",
         "pref_name": "string",
         "all_names": "string",
+        "molecule_structures.canonical_smiles": "string",
         "molecule_type": "string",
         "structure_type": "string",
         "is_radical": "boolean",
@@ -115,8 +116,30 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         typed["document_chembl_id"] = pd.Series(
             pd.NA, index=typed.index, dtype="string"
         )
+ 
+    canonical_candidates = [
+        column
+        for column in (
+            "canonical_smiles",
+            "molecule_structures.canonical_smiles",
+        )
+        if column in typed.columns
+    ]
 
+    if canonical_candidates:
+        source_column = canonical_candidates[0]
+        typed["canonical_smiles"] = typed[source_column].astype("string")
+    else:
+        typed["canonical_smiles"] = pd.Series(
+            pd.NA, index=typed.index, dtype="string"
+        )
+
+    chirality_reference = int(
+        config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
+    )
+ 
     chirality_reference = int(pipeline_testitem.get("chirality_reference", 1))
+ 
     typed["unknown_chirality"] = _compute_unknown_chirality(
         typed.get("nstereo", pd.Series([], dtype="Int64")), chirality_reference
     )
@@ -173,7 +196,11 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     processed = typed.drop(columns=["nstereo"], errors="ignore")
 
-    columns_to_remove = ["document_chembl_id", "document_testitem_total"]
+    columns_to_remove = [
+        "document_chembl_id",
+        "document_testitem_total",
+        "molecule_structures.canonical_smiles",
+    ]
     processed = processed.drop(
         columns=[col for col in columns_to_remove if col in processed.columns]
     )
