@@ -1,0 +1,426 @@
+# ChEMBL Data Acquisition data schema
+
+## Input tables
+
+### document_csv — aggregated publications (``data/input/output.document_*.csv``)
+Purpose: consolidated ChEMBL publication master table enriched with metadata from PubMed, Crossref, OpenAlex, Semantic Scholar, and the native ChEMBL catalogue. Serves as the primary feed for document post-processing.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| PubMed.PMID | Integer (nullable) | PubMed export within ``document_csv`` | Raw PubMed identifier of the article. |
+| PubMed.DOI | Text | PubMed | DOI value reported by PubMed without normalisation. |
+| PubMed.ArticleTitle | Text | PubMed | Publication title from PubMed. |
+| PubMed.Abstract | Text | PubMed | Abstract provided by PubMed. |
+| PubMed.JournalTitle | Text | PubMed | Journal title recorded in PubMed. |
+| PubMed.JournalISOAbbrev | Text | PubMed | ISO journal abbreviation supplied by PubMed. |
+| PubMed.Volume | Text | PubMed | Volume number from PubMed. |
+| PubMed.Issue | Text | PubMed | Issue number from PubMed. |
+| PubMed.StartPage | Text | PubMed | First page of the article according to PubMed. |
+| PubMed.EndPage | Text | PubMed | Last page of the article according to PubMed. |
+| PubMed.ISSN | Text | PubMed | Journal ISSN from PubMed. |
+| PubMed.PublicationType | Text | PubMed | Publication type (Review, Article, etc.) from PubMed. |
+| PubMed.MeSH_Descriptors | Text | PubMed | List of MeSH descriptors assigned by PubMed. |
+| PubMed.MeSH_Qualifiers | Text | PubMed | List of MeSH qualifiers. |
+| PubMed.ChemicalList | Text | PubMed | Chemical substances associated with the article. |
+| PubMed.YearCompleted | Integer | PubMed | Year when the record was completed in PubMed. |
+| PubMed.MonthCompleted | Integer | PubMed | Month when the record was completed. |
+| PubMed.DayCompleted | Integer | PubMed | Day when the record was completed. |
+| PubMed.YearRevised | Integer | PubMed | Year of the last revision. |
+| PubMed.MonthRevised | Integer | PubMed | Month of the last revision. |
+| PubMed.DayRevised | Integer | PubMed | Day of the last revision. |
+| PubMed.Error | Text | PubMed | API status or error message returned by PubMed. |
+| scholar.PMID | Integer | Semantic Scholar | PubMed identifier resolved by Semantic Scholar. |
+| scholar.DOI | Text | Semantic Scholar | DOI value reported by Semantic Scholar. |
+| scholar.PublicationTypes | Text | Semantic Scholar | Publication type classification from Semantic Scholar. |
+| scholar.Venue | Text | Semantic Scholar | Journal or venue name from Semantic Scholar. |
+| scholar.SemanticScholarId | Text | Semantic Scholar | Internal Semantic Scholar article identifier. |
+| scholar.ExternalIds | Text | Semantic Scholar | Additional identifiers (arXiv, MAG, etc.). |
+| scholar.Error | Text | Semantic Scholar | Error details produced by the Semantic Scholar API. |
+| OpenAlex.PMID | Integer | OpenAlex | PubMed identifier reported by OpenAlex. |
+| OpenAlex.DOI | Text | OpenAlex | DOI from OpenAlex metadata. |
+| OpenAlex.PublicationTypes | Text | OpenAlex | Publication type list from OpenAlex. |
+| OpenAlex.TypeCrossref | Text | OpenAlex | Crossref type propagated by OpenAlex. |
+| OpenAlex.Genre | Text | OpenAlex | Genre classification from OpenAlex. |
+| OpenAlex.Venue | Text | OpenAlex | Venue or journal name from OpenAlex. |
+| OpenAlex.MeshDescriptors | Text | OpenAlex | MeSH descriptors reported by OpenAlex. |
+| OpenAlex.MeshQualifiers | Text | OpenAlex | MeSH qualifiers reported by OpenAlex. |
+| OpenAlex.Id | Text | OpenAlex | OpenAlex internal work identifier. |
+| OpenAlex.Error | Text | OpenAlex | Error details returned by OpenAlex. |
+| crossref.DOI | Text | Crossref | DOI retrieved directly from Crossref. |
+| crossref.Type | Text | Crossref | Crossref publication type. |
+| crossref.Subtype | Text | Crossref | Crossref subtype value. |
+| crossref.Title | Text | Crossref | Title provided by Crossref. |
+| crossref.Subtitle | Text | Crossref | Subtitle provided by Crossref. |
+| crossref.Subject | Text | Crossref | Crossref subject categories. |
+| crossref.Error | Text | Crossref | Error or status details from Crossref. |
+| publication_types_normalised | Text | ``document_csv`` pipeline | Aggregated and normalised publication-type list. |
+| publication_review_score | Decimal | ``document_csv`` pipeline | Calculated score estimating review likelihood. |
+| publication_experimental_score | Decimal | ``document_csv`` pipeline | Calculated score estimating experimental evidence. |
+| publication_class | Text | ``document_csv`` pipeline | Final document class (review/experimental) produced by the pipeline. |
+| ChEMBL.document_chembl_id | Text | ChEMBL | Document identifier assigned by ChEMBL. |
+| ChEMBL.title | Text | ChEMBL | Title from the native ChEMBL catalogue. |
+| ChEMBL.abstract | Text | ChEMBL | Abstract stored in ChEMBL. |
+| ChEMBL.doi | Text | ChEMBL | DOI recorded by ChEMBL. |
+| ChEMBL.year | Integer | ChEMBL | Publication year tracked by ChEMBL. |
+| ChEMBL.journal | Text | ChEMBL | Journal title in ChEMBL. |
+| ChEMBL.journal_abbrev | Text | ChEMBL | Abbreviated journal title in ChEMBL. |
+| ChEMBL.volume | Text | ChEMBL | Volume reported by ChEMBL. |
+| ChEMBL.issue | Text | ChEMBL | Issue reported by ChEMBL. |
+| ChEMBL.first_page | Integer | ChEMBL | First page number stored in ChEMBL. |
+| ChEMBL.last_page | Integer | ChEMBL | Last page number stored in ChEMBL. |
+| ChEMBL.pubmed_id | Integer | ChEMBL | PubMed identifier stored in ChEMBL. |
+| ChEMBL.authors | Text | ChEMBL | Author list captured by ChEMBL. |
+| ChEMBL.source | Text | ChEMBL | Provenance/source information tracked by ChEMBL. |
+
+### document_reference_csv — curated document overrides (``dictionary/_curation/document.csv``)
+Purpose: overrides review flags and quality attributes for specific documents.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| document_chembl_id | Text | Curated CSV | ChEMBL document key. |
+| classification | Integer | Curated CSV | Override flag: 1 = review, 0 = experimental. |
+| document_contains_external_links | Boolean | Curated CSV | Indicates that the article references external resources (registries, commercial links). |
+| is_experimental_doc | Boolean | Curated CSV | Confirms that the document is experimental. |
+
+### citation_reference_csv — citation significance statistics (``dictionary/_curation/citation_fraction.csv``)
+Purpose: stores thresholds that define when the number of cited activities is significant for review detection.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| N | Integer | Curated CSV | Activity count for which the threshold applies. |
+| K_min_significant | Integer | Curated CSV | Minimum number of activities considered significant citations. |
+| test_used_at_threshold | Text | Curated CSV | Statistical test used to derive the threshold. |
+| p_value_at_threshold | Decimal | Curated CSV | p-value assumed during threshold calculation. |
+
+### activity_csv — raw ChEMBL activities (``data/input/output.activity_*.csv``)
+Purpose: raw biological activity records used to compute document and assay aggregates.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| activity_id | Integer | ChEMBL export | Unique activity record identifier. |
+| molecule_chembl_id | Text | ChEMBL | Molecule associated with the activity. |
+| assay_chembl_id | Text | ChEMBL | Assay that produced the record. |
+| activity_comment | Text | ChEMBL | Free-text comment describing the activity. |
+| assay_description | Text | ChEMBL | Assay description supplied with the activity. |
+| assay_variant_accession | Text | ChEMBL | Variant accession number if provided. |
+| assay_variant_mutation | Text | ChEMBL | Mutation details of the target variant. |
+| bao_format | Text | ChEMBL | BAO assay format. |
+| bao_label | Text | ChEMBL | BAO label for the activity. |
+| data_validity_comment | Text | ChEMBL | Data validity comment. |
+| data_validity_description | Text | ChEMBL | Extended explanation of data validity. |
+| document_chembl_id | Text | ChEMBL | Linked ChEMBL document. |
+| pchembl_value | Decimal | ChEMBL | pChEMBL value if available. |
+| potential_duplicate | Integer | ChEMBL | Potential duplicate indicator (0/1). |
+| qudt_units | Text | ChEMBL | Measurement units mapped to QUDT ontology. |
+| record_id | Integer | ChEMBL | Internal record identifier. |
+| relation | Text | ChEMBL | Relation sign for the original value ('=', '<', etc.). |
+| src_assay_id | Integer | ChEMBL | Source assay identifier. |
+| src_id | Integer | ChEMBL | Source system identifier in ChEMBL. |
+| standard_relation | Text | ChEMBL | Normalised relation symbol for the standard value. |
+| standard_units | Text | ChEMBL | Units of the standardised value. |
+| type | Text | ChEMBL | Activity type (IC50, Ki, etc.). |
+| units | Text | ChEMBL | Original measurement units. |
+| value | Decimal | ChEMBL | Reported numeric value. |
+| standard_type | Text | ChEMBL | Type of the standardised value. |
+| standard_value | Decimal | ChEMBL | Standardised numeric value. |
+
+### activity_reference_csv — curated activity backbone (``dictionary/_curation/activity.csv``)
+Purpose: minimum fieldset used when raw activity data are unavailable.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| activity_chembl_id | Integer | Curated CSV | ChEMBL activity identifier. |
+| assay_chembl_id | Text | Curated CSV | Source assay identifier. |
+| document_chembl_id | Text | Curated CSV | Linked document identifier. |
+| is_citation | Boolean | Curated CSV | Marks the activity as counted citation for reviews. |
+| molecule_chembl_id | Text | Curated CSV | Molecule from the activity. |
+| saltform_id | Text | Curated CSV | Salt form identifier if supplied. |
+| target_chembl_id | Text | Curated CSV | Target identifier associated with the activity. |
+
+### assay_csv — raw assay records (``data/input/output.assay_*.csv``)
+Purpose: ChEMBL assay catalogue used for normalisation and linking with documents.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| assay_chembl_id | Text | ChEMBL | Unique assay identifier. |
+| assay_cell_type | Text | ChEMBL | Cell type used in the assay. |
+| assay_subcellular_fraction | Text | ChEMBL | Subcellular fraction (membrane, cytosol, etc.). |
+| assay_tissue | Text | ChEMBL | Tissue type employed in the assay. |
+| bao_format | Text | ChEMBL | BAO format for the assay. |
+| description | Text | ChEMBL | Narrative assay description. |
+| document_chembl_id | Text | ChEMBL | Source document identifier. |
+| target_chembl_id | Text | ChEMBL | Target entity for the assay. |
+| aidx | Text | ChEMBL | Internal ChEMBL assay index. |
+| assay_category | Integer | ChEMBL | Assay category numeric value. |
+| assay_classifications | Text | ChEMBL | List of assay classifications. |
+| assay_group | Integer | ChEMBL | Assay group numeric value. |
+| assay_organism | Text | ChEMBL | Organism providing the biological material. |
+| assay_parameters | Text | ChEMBL | Experimental parameters captured by ChEMBL. |
+| assay_strain | Integer | ChEMBL | Organism strain identifier. |
+| assay_tax_id | Integer | ChEMBL | NCBI taxonomy identifier. |
+| assay_test_type | Text | ChEMBL | Test type (biochemical, cellular, etc.). |
+| assay_type | Text | ChEMBL | Assay type (binding, functional, etc.). |
+| assay_type_description | Text | ChEMBL | Extended description of the assay type. |
+| assay_with_same_target | Integer | ChEMBL | Count of assays sharing the same target. |
+| bao_label | Text | ChEMBL | BAO label. |
+| cell_chembl_id | Text | ChEMBL | ChEMBL cell identifier. |
+| confidence_score | Integer | ChEMBL | Confidence score for target assignment. |
+| relationship_type | Text | ChEMBL | Relationship type between target and activity. |
+| src_assay_id | Integer | ChEMBL | Source assay identifier. |
+| src_id | Integer | ChEMBL | Source system identifier. |
+| tissue_chembl_id | Text | ChEMBL | Tissue identifier. |
+| variant_sequence.isoform | Text | ChEMBL | Reported protein isoform. |
+| variant_sequence.mutation | Text | ChEMBL | Mutation description. |
+| variant_sequence.sequence | Text | ChEMBL | Protein variant sequence. |
+
+### testitem_csv — raw molecule records (``data/input/output.testitem_*.csv``)
+Purpose: ChEMBL test item catalogue used to derive the post-processed molecule table.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Text | ChEMBL | ChEMBL molecule identifier. |
+| black_box_warning | Integer | ChEMBL | Black-box warning indicator (0/1). |
+| first_approval | Decimal | ChEMBL | Year of first regulatory approval when available. |
+| max_phase | Decimal | ChEMBL | Highest clinical development phase. |
+| molecule_structures.canonical_smiles | Text | ChEMBL | Canonical SMILES from the structure block. |
+| molecule_structures.standard_inchi | Text | ChEMBL | Standard InChI string. |
+| molecule_structures.standard_inchi_key | Text | ChEMBL | Standard InChIKey. |
+| molecule_type | Text | ChEMBL | Molecule type (Small molecule, Antibody, etc.). |
+| oral | Boolean | ChEMBL | Oral administration flag. |
+| parenteral | Boolean | ChEMBL | Parenteral administration flag. |
+| pref_name | Text | ChEMBL | Preferred compound name. |
+| pubchem_canonical_smiles | Text | PubChem via ChEMBL | Canonical SMILES from PubChem. |
+| pubchem_cid | Decimal | PubChem | PubChem compound ID. |
+| pubchem_inchi | Text | PubChem | InChI string from PubChem. |
+| pubchem_inchikey | Text | PubChem | InChIKey from PubChem. |
+| pubchem_isomeric_smiles | Text | PubChem | Isomeric SMILES from PubChem. |
+| pubchem_iupac_name | Text | PubChem | IUPAC name from PubChem. |
+| pubchem_molecular_formula | Text | PubChem | Molecular formula from PubChem. |
+| structure_type | Text | ChEMBL | Structure type (MOL, SEQ, etc.). |
+| topical | Boolean | ChEMBL | Topical administration flag. |
+
+### testitem_reference_csv — curated molecule overrides (``dictionary/_curation/testitem.csv``)
+Purpose: overrides name lists and stereo counts for selected molecules.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Text | Curated CSV | ChEMBL molecule identifier. |
+| all_names | Text | Curated CSV | Pipe-delimited list of alternative names. |
+| is_radical | Boolean | Curated CSV | Indicates radical form. |
+| nstereo | Integer | Curated CSV | Reference number of stereocentres. |
+| salt_chembl_id | Text | Curated CSV | Salt form identifier. |
+| standard_inchi_skeleton | Text | Curated CSV | First block of the InChIKey (skeleton). |
+| standard_inchi_stereo | Text | Curated CSV | Stereo block of the InChIKey. |
+
+### target_csv — raw target catalogue (``data/input/output.targets_*.csv``)
+Purpose: complete ChEMBL target export with UniProt, IUPHAR and Guide to PHARMACOLOGY enrichments used to prepare the final Target table.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| target_chembl_id | Text | ChEMBL | ChEMBL target identifier. |
+| uniprot_id_primary | Text | UniProt via ChEMBL | Primary UniProt accession. |
+| uniprot_ids_all | Text | UniProt | All UniProt accessions. |
+| isoform_ids | Text | UniProt | Isoform identifiers. |
+| isoform_names | Text | UniProt | Isoform names. |
+| isoform_synonyms | Text | UniProt | Isoform synonyms. |
+| hgnc_id | Text | HGNC via ChEMBL | HGNC gene identifier. |
+| gene_symbol | Text | HGNC | Gene symbol. |
+| protein_name_canonical | Text | UniProt | Canonical protein name. |
+| protein_name_alt | Text | UniProt | Alternative protein names. |
+| organism | Text | UniProt | Organism name. |
+| taxon_id | Integer | UniProt/NCBI | Taxonomy identifier. |
+| lineage_superkingdom | Text | UniProt | Taxonomic superkingdom. |
+| lineage_phylum | Text | UniProt | Taxonomic phylum. |
+| lineage_class | Text | UniProt | Taxonomic class. |
+| sequence_length | Integer | UniProt | Protein sequence length. |
+| features_signal_peptide | Text | UniProt | Signal peptide annotations. |
+| features_transmembrane | Text | UniProt | Transmembrane domain annotations. |
+| features_topology | Text | UniProt | Topology annotations. |
+| ptm_glycosylation | Text | UniProt | Post-translational glycosylation sites. |
+| ptm_lipidation | Text | UniProt | Post-translational lipidation sites. |
+| ptm_disulfide_bond | Text | UniProt | Disulfide bond annotations. |
+| ptm_modified_residue | Text | UniProt | Other modified residues. |
+| xref_chembl | Text | ChEMBL | Cross references to ChEMBL entities. |
+| xref_uniprot | Text | UniProt | Cross references to UniProt. |
+| xref_ensembl | Text | Ensembl | Cross references to Ensembl. |
+| xref_iuphar | Text | IUPHAR | Cross references to IUPHAR. |
+| gtop_target_id | Text | Guide to PHARMACOLOGY | Target identifier in GtoPdb. |
+| gtop_synonyms | Text | Guide to PHARMACOLOGY | Synonyms from GtoPdb. |
+| gtop_natural_ligands_n | Integer | GtoPdb | Count of natural ligands. |
+| gtop_interactions_n | Integer | GtoPdb | Count of known interactions. |
+| gtop_function_text_short | Text | GtoPdb | Short functional summary. |
+| uniprot_last_update | Text (date) | UniProt | Date of the last UniProt update. |
+| uniprot_version | Text | UniProt | UniProt record version. |
+| pipeline_version | Text | ``target_csv`` pipeline | Export version identifier. |
+| timestamp_utc | Text (datetime) | ``target_csv`` pipeline | Timestamp when the file was generated. |
+| pfam | Text | Pfam | Pfam domains. |
+| interpro | Text | InterPro | InterPro annotations. |
+| xref_pdb | Text | PDB | Linked PDB structures. |
+| xref_alphafold | Text | AlphaFold | AlphaFold model links. |
+| hgnc_name | Text | HGNC | HGNC gene name. |
+| uniProtkbId | Text | UniProt | Primary UniProtKB identifier. |
+| secondaryAccessions | Text | UniProt | Secondary accessions. |
+| recommendedName | Text | UniProt | Structured recommended name payload from UniProt. |
+| geneName | Text | UniProt | Structured gene name payload. |
+| secondaryAccessionNames | Text | UniProt | Names linked to secondary accessions. |
+| molecular_function | Text | GO/UniProt | GO molecular function annotations. |
+| cellular_component | Text | GO/UniProt | GO cellular component annotations. |
+| subcellular_location | Text | UniProt | Free-text subcellular localisation. |
+| topology | Text | UniProt | Topology narrative from UniProt. |
+| transmembrane | Text | UniProt | Transmembrane region annotations. |
+| intramembrane | Text | UniProt | Intramembrane region annotations. |
+| glycosylation | Text | UniProt | Detailed glycosylation sites. |
+| lipidation | Text | UniProt | Lipidation sites. |
+| disulfide_bond | Text | UniProt | Disulfide bond list. |
+| modified_residue | Text | UniProt | Other modified residues. |
+| phosphorylation | Text | UniProt | Phosphorylation sites. |
+| acetylation | Text | UniProt | Acetylation sites. |
+| ubiquitination | Text | UniProt | Ubiquitination sites. |
+| signal_peptide | Text | UniProt | Signal peptide segments. |
+| propeptide | Text | UniProt | Propeptide segments. |
+| GuidetoPHARMACOLOGY | Text | GtoPdb | Raw Guide to PHARMACOLOGY payload. |
+| family | Text | UniProt/ChEMBL | Protein family label. |
+| SUPFAM | Text | SUPFAM | Structural superfamily annotation. |
+| PROSITE | Text | PROSITE | PROSITE motif annotation. |
+| InterPro | Text | InterPro | Duplicate InterPro annotation field. |
+| Pfam | Text | Pfam | Duplicate Pfam annotation field. |
+| PRINTS | Text | PRINTS | PRINTS fingerprint annotation. |
+| TCDB | Text | TCDB | Transporter Classification Database entry. |
+| pref_name | Text | ChEMBL | Preferred target name in ChEMBL. |
+| target_type | Text | ChEMBL | Target type (e.g., SINGLE PROTEIN). |
+| tax_id | Integer | ChEMBL | Taxonomy identifier stored by ChEMBL. |
+| species_group_flag | Integer | ChEMBL | Species grouping flag. |
+| target_components | Text | ChEMBL | JSON payload with target components. |
+| protein_classifications | Text | ChEMBL | Protein classification data (JSON/pipe). |
+| cross_references | Text | ChEMBL | Additional cross-reference payload. |
+| gene_symbol_list | Text | ChEMBL | List of gene symbols. |
+| protein_synonym_list | Text | ChEMBL | Protein synonym list. |
+| reactions | Text | ChEMBL | Associated reaction list. |
+| reaction_ec_numbers | Text | ChEMBL | EC numbers of reactions. |
+| protein_class_pred_L1 | Text | ChEMBL | Predicted protein class (level 1). |
+| protein_class_pred_L2 | Text | ChEMBL | Predicted protein class (level 2). |
+| protein_class_pred_L3 | Text | ChEMBL | Predicted protein class (level 3). |
+| protein_class_pred_rule_id | Text | ChEMBL | Rule identifier used for the prediction. |
+| protein_class_pred_evidence | Text | ChEMBL | Evidence type supporting the prediction. |
+| protein_class_pred_confidence | Text | ChEMBL | Confidence of the prediction. |
+| iuphar_target_id | Text | IUPHAR | Target identifier in IUPHAR. |
+| iuphar_family_id | Text | IUPHAR | Family identifier in IUPHAR. |
+| iuphar_type | Text | IUPHAR | IUPHAR target type. |
+| iuphar_class | Text | IUPHAR | IUPHAR class. |
+| iuphar_subclass | Text | IUPHAR | IUPHAR subclass. |
+| iuphar_chain | Text | IUPHAR | IUPHAR chain/subunit. |
+| iuphar_name | Text | IUPHAR | IUPHAR display name. |
+| iuphar_full_id_path | Text | IUPHAR | Full hierarchical identifier path. |
+| iuphar_full_name_path | Text | IUPHAR | Full hierarchical name path. |
+
+## Output tables
+
+### Document — normalised publications (``data/output/document_postprocessed.csv``)
+Purpose: cleaned, normalised publication master table for Power Query enriched with activity aggregates.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| PMID | Integer (Int64) | Derived from ``document_out``/``document_csv`` | Normalised PubMed identifier consolidated from all sources. |
+| doi | Text | DOI validation routine | Consensus DOI selected across PubMed, Crossref, OpenAlex and ChEMBL. |
+| sort_order | Text | Document post-processing | Deterministic sort key combining ISSN, date and PMID. |
+| completed | Text (YYYY-MM-DD) | Document post-processing | Completion date from PubMed or fallback to ChEMBL year. |
+| invalid_record | Boolean | Document post-processing | Flags inconsistent records (invalid DOI or volume metadata). |
+| title | Text | ``document_out`` prioritising PubMed | Final title after validation and renaming. |
+| abstract | Text | ``document_out`` prioritising PubMed | Final abstract after validation. |
+| authors | Text | ChEMBL/``document_out`` | Normalised author list stored in lowercase. |
+| PubMed.MeSH | Text | PubMed/OpenAlex | MeSH descriptors resolved from PubMed with OpenAlex fallback. |
+| OpenAlex.MeSH | Text | OpenAlex | MeSH descriptors from OpenAlex. |
+| MeSH.qualifiers | Text | PubMed/OpenAlex | MeSH qualifiers merged from PubMed and OpenAlex. |
+| chemical_list | Text | PubMed | Chemical list from PubMed. |
+| ChEMBL.document_chembl_id | Text | ChEMBL | ChEMBL document identifier. |
+| PubMed.publication_type | Text | PubMed with alias map | Normalised PubMed publication type. |
+| scholar.PublicationTypes | Text | Semantic Scholar | Cleaned Semantic Scholar publication type. |
+| OpenAlex.publication_type | Text | OpenAlex | Normalised OpenAlex publication type. |
+| OpenAlex.crossref_type | Text | OpenAlex/Crossref | Crossref type propagated by OpenAlex. |
+| OpenAlex.Genre | Text | OpenAlex | Genre from OpenAlex. |
+| crossref.publication_type | Text | Crossref | Crossref publication type. |
+| n_activity | Integer (Int64) | Activity aggregation | Number of activity records linked to the document. |
+| n_assay | Integer (Int64) | Activity aggregation | Count of distinct assays linked to the document. |
+| n_testitem | Integer (Int64) | Activity aggregation | Count of distinct molecules linked to the document. |
+| review | Boolean | Document post-processing | Final review flag computed from votes and curated overrides. |
+| is_experimental | Boolean | Document post-processing | Inverted experimental flag (true when not review). |
+
+### Test item — normalised molecules (``data/output/testitem_postprocessed.csv``)
+Purpose: compact molecule lookup supporting structural matching in Power Query.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Text | ``testitem_csv`` | ChEMBL molecule identifier. |
+| pref_name | Text | ``testitem_csv``/curated reference | Normalised preferred compound name. |
+| all_names | Text | ``testitem_reference_csv`` → ``testitem_csv`` | Consolidated pipe-delimited synonym list. |
+| standard_inchi_key | Text | ``testitem_csv`` | Standard InChIKey. |
+| canonical_smiles | Text | ``testitem_csv`` | Canonical SMILES (prefers the canonical column when available). |
+| skeleton_inchi_key | Text | Post-processing | Skeleton portion of the InChIKey (leading characters) for deduplication. |
+| unknown_chirality | Boolean | Post-processing (nstereo vs threshold) | Indicates that stereochemistry is missing or inconsistent. |
+| invalid_record | Boolean | ``invalid_rules`` logic | Flags molecules lacking structures or violating expected molecule/structure types. |
+
+### Assay — normalised assays (``data/output/assay_postprocessed.csv``)
+Purpose: cleaned assay catalogue augmented with per-document assay counts.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| assay_chembl_id | Text | ``assay_csv`` | ChEMBL assay identifier. |
+| document_chembl_id | Text | ``assay_csv`` | Source document identifier. |
+| target_chembl_id | Text | ``assay_csv`` | Target identifier. |
+| assay_category | Text | ``assay_csv`` | Assay category (stored as string after typing). |
+| assay_group | Text | ``assay_csv`` | Assay group identifier. |
+| assay_type | Text | ``assay_csv`` | Assay type (binding, functional, etc.). |
+| assay_type_description | Text | ``assay_csv`` | Detailed assay type description. |
+| assay_organism | Text | ``assay_csv`` | Source organism. |
+| assay_test_type | Text | ``assay_csv`` | Test type (biochemical, cellular, etc.). |
+| assay_cell_type | Text | ``assay_csv`` | Cell type used. |
+| assay_tissue | Text | ``assay_csv`` | Tissue used. |
+| assay_with_same_target | Integer (Int64) | ``assay_csv`` | Number of other assays with the same target recorded by ChEMBL. |
+| bao_format | Text | ``assay_csv`` | BAO format. |
+| bao_label | Text | ``assay_csv`` | BAO label. |
+| aidx | Text | ``assay_csv`` | ChEMBL assay index. |
+| assay_classifications | Text | ``assay_csv`` | Classification lists. |
+| assay_parameters | Text | ``assay_csv`` | Experimental parameter details. |
+| assay_subcellular_fraction | Text | ``assay_csv`` | Subcellular fraction. |
+| cell_chembl_id | Text | ``assay_csv`` | Cell identifier. |
+| description | Text | ``assay_csv`` | Narrative description. |
+| src_assay_id | Text | ``assay_csv`` | Source assay identifier. |
+| src_id | Integer (Int64) | ``assay_csv`` | Source system identifier. |
+| tissue_chembl_id | Text | ``assay_csv`` | Tissue identifier. |
+| sequence | Text | ``assay_csv`` | Protein variant sequence (from variant_sequence.sequence). |
+| mutation | Text | ``assay_csv`` | Variant mutation details. |
+| isoform | Text | ``assay_csv`` | Protein isoform. |
+| document_assay_total | Integer (Int64) | Activity aggregation | Number of distinct assays per document. |
+
+### Target — normalised targets (``data/output/target_postprocessed.csv``)
+Purpose: cleaned protein target master table with harmonised naming and classification.
+
+| Column | Data type | Source | Description |
+| --- | --- | --- | --- |
+| target_chembl_id | Text | ``target_csv`` | ChEMBL target identifier. |
+| uniprot_id_primary | Text | ``target_csv`` | Primary UniProt accession. |
+| recommended_name | Text | Post-processing | Final recommended name prioritising canonical forms. |
+| gene_name | Text | Post-processing | Final gene symbol stored in lowercase. |
+| synonyms | Text | Post-processing | Pipe-delimited synonym list cleaned by the shared helper. |
+| protein_class_pred_L1 | Text | Post-processing | Final predicted protein class (level 1) after merging evidence. |
+| protein_class_pred_L2 | Text | Post-processing | Final predicted protein class (level 2). |
+| protein_class_pred_L3 | Text | Post-processing | Final predicted protein class (level 3). |
+| protein_class_pred_rule_id | Text | Post-processing | Identifier of the rule that produced the prediction. |
+| protein_class_pred_evidence | Text | Post-processing | Evidence type supporting the prediction. |
+| protein_class_pred_confidence | Text | Post-processing | Confidence associated with the prediction. |
+| taxon_id | Integer (Int64) | ``target_csv`` | Taxonomy identifier. |
+| lineage_superkingdom | Text | ``target_csv`` | Taxonomic superkingdom. |
+| lineage_phylum | Text | ``target_csv`` | Taxonomic phylum. |
+| lineage_class | Text | ``target_csv`` | Taxonomic class. |
+| reaction_ec_numbers | Text | Post-processing | Pipe-delimited EC number list. |
+| cellularity | Text | Post-processing | Cellularity classification (unicellular/multicellular/other) derived from taxonomy. |
+| multifunctional_enzyme | Text | Post-processing | Boolean string flag indicating multiple EC classes. |
+| iuphar_name | Text | ``target_csv`` | IUPHAR display name. |
+| iuphar_target_id | Text | ``target_csv`` | IUPHAR target identifier. |
+| iuphar_family_id | Text | ``target_csv`` | IUPHAR family identifier. |
+| iuphar_type | Text | ``target_csv`` | IUPHAR type. |
+| iuphar_class | Text | ``target_csv`` | IUPHAR class. |
+| iuphar_subclass | Text | ``target_csv`` | IUPHAR subclass. |
+| iuphar_chain | Text | ``target_csv`` | IUPHAR chain/subunit designation. |
+| iuphar_full_id_path | Text | ``target_csv`` | Full identifier hierarchy from IUPHAR. |
+| iuphar_full_name_path | Text | ``target_csv`` | Full name hierarchy from IUPHAR. |

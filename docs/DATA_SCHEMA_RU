@@ -1,0 +1,426 @@
+# Схема данных проекта ChEMBL Data Acquisition
+
+## Входные таблицы
+
+### document_csv — агрегированные публикации (``data/input/output.document_*.csv``)
+Назначение: объединённый справочник публикаций ChEMBL с метаданными из PubMed, Crossref, OpenAlex, Semantic Scholar и собственного каталога ChEMBL. Используется как основной источник для постобработки документов.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| PubMed.PMID | Число (целое, допускает пропуски) | Экспорт PubMed в файле ``document_csv`` | Чистый идентификатор статьи в базе PubMed. |
+| PubMed.DOI | Строка | PubMed | DOI из записи PubMed без нормализации. |
+| PubMed.ArticleTitle | Строка | PubMed | Заголовок публикации по данным PubMed. |
+| PubMed.Abstract | Строка | PubMed | Аннотация публикации из PubMed. |
+| PubMed.JournalTitle | Строка | PubMed | Полное название журнала в PubMed. |
+| PubMed.JournalISOAbbrev | Строка | PubMed | ISO-аббревиатура журнала в PubMed. |
+| PubMed.Volume | Строка | PubMed | Номер тома из PubMed. |
+| PubMed.Issue | Строка | PubMed | Номер выпуска из PubMed. |
+| PubMed.StartPage | Строка | PubMed | Начальная страница статьи в PubMed. |
+| PubMed.EndPage | Строка | PubMed | Конечная страница статьи в PubMed. |
+| PubMed.ISSN | Строка | PubMed | ISSN журнала из PubMed. |
+| PubMed.PublicationType | Строка | PubMed | Тип публикации (Review, Article и т. п.) в PubMed. |
+| PubMed.MeSH_Descriptors | Строка | PubMed | Список дескрипторов MeSH для статьи. |
+| PubMed.MeSH_Qualifiers | Строка | PubMed | Список квалификаторов MeSH. |
+| PubMed.ChemicalList | Строка | PubMed | Перечень химических веществ, связанных со статьёй. |
+| PubMed.YearCompleted | Число (целое) | PubMed | Год завершения индексирования записи. |
+| PubMed.MonthCompleted | Число (целое) | PubMed | Месяц завершения индексирования записи. |
+| PubMed.DayCompleted | Число (целое) | PubMed | День завершения индексирования записи. |
+| PubMed.YearRevised | Число (целое) | PubMed | Год последней правки записи. |
+| PubMed.MonthRevised | Число (целое) | PubMed | Месяц последней правки записи. |
+| PubMed.DayRevised | Число (целое) | PubMed | День последней правки записи. |
+| PubMed.Error | Строка | PubMed | Сообщения об ошибках или статус ответа API PubMed. |
+| scholar.PMID | Число (целое) | Semantic Scholar | PubMed ID, найденный в Semantic Scholar. |
+| scholar.DOI | Строка | Semantic Scholar | DOI по данным Semantic Scholar. |
+| scholar.PublicationTypes | Строка | Semantic Scholar | Тип публикации согласно Semantic Scholar. |
+| scholar.Venue | Строка | Semantic Scholar | Название площадки/журнала из Semantic Scholar. |
+| scholar.SemanticScholarId | Строка | Semantic Scholar | Внутренний идентификатор статьи в Semantic Scholar. |
+| scholar.ExternalIds | Строка | Semantic Scholar | Дополнительные идентификаторы (arXiv, MAG и т. п.). |
+| scholar.Error | Строка | Semantic Scholar | Сообщение об ошибке при обращении к API Semantic Scholar. |
+| OpenAlex.PMID | Число (целое) | OpenAlex | PubMed ID, найденный в OpenAlex. |
+| OpenAlex.DOI | Строка | OpenAlex | DOI из OpenAlex. |
+| OpenAlex.PublicationTypes | Строка | OpenAlex | Тип публикации из OpenAlex (многозначный список). |
+| OpenAlex.TypeCrossref | Строка | OpenAlex | Тип в терминологии Crossref, переданный OpenAlex. |
+| OpenAlex.Genre | Строка | OpenAlex | Жанр публикации в OpenAlex. |
+| OpenAlex.Venue | Строка | OpenAlex | Название журнала/конференции из OpenAlex. |
+| OpenAlex.MeshDescriptors | Строка | OpenAlex | Список дескрипторов MeSH из OpenAlex. |
+| OpenAlex.MeshQualifiers | Строка | OpenAlex | Список квалификаторов MeSH из OpenAlex. |
+| OpenAlex.Id | Строка | OpenAlex | Внутренний идентификатор работы в OpenAlex. |
+| OpenAlex.Error | Строка | OpenAlex | Сообщение об ошибке OpenAlex. |
+| crossref.DOI | Строка | Crossref | DOI из Crossref. |
+| crossref.Type | Строка | Crossref | Тип публикации в Crossref. |
+| crossref.Subtype | Строка | Crossref | Подтип публикации в Crossref. |
+| crossref.Title | Строка | Crossref | Название публикации в Crossref. |
+| crossref.Subtitle | Строка | Crossref | Дополнительный подзаголовок из Crossref. |
+| crossref.Subject | Строка | Crossref | Тематические рубрики по данным Crossref. |
+| crossref.Error | Строка | Crossref | Сообщение об ошибке/статус ответа Crossref. |
+| publication_types_normalised | Строка | Пайплайн ``document_csv`` | Нормализованный список типов публикации (агрегированный). |
+| publication_review_score | Число (вещественное) | Пайплайн ``document_csv`` | Расчётный скор вероятности обзора. |
+| publication_experimental_score | Число (вещественное) | Пайплайн ``document_csv`` | Расчётный скор экспериментальной статьи. |
+| publication_class | Строка | Пайплайн ``document_csv`` | Итоговая классификация записи (review/experimental). |
+| ChEMBL.document_chembl_id | Строка | ChEMBL | Идентификатор документа в базе ChEMBL. |
+| ChEMBL.title | Строка | ChEMBL | Заголовок из каталога ChEMBL. |
+| ChEMBL.abstract | Строка | ChEMBL | Аннотация из каталога ChEMBL. |
+| ChEMBL.doi | Строка | ChEMBL | DOI из каталога ChEMBL. |
+| ChEMBL.year | Число (целое) | ChEMBL | Год публикации по ChEMBL. |
+| ChEMBL.journal | Строка | ChEMBL | Название журнала в ChEMBL. |
+| ChEMBL.journal_abbrev | Строка | ChEMBL | Сокращённое название журнала в ChEMBL. |
+| ChEMBL.volume | Строка | ChEMBL | Номер тома в ChEMBL. |
+| ChEMBL.issue | Строка | ChEMBL | Номер выпуска в ChEMBL. |
+| ChEMBL.first_page | Число (целое) | ChEMBL | Первая страница статьи по ChEMBL. |
+| ChEMBL.last_page | Число (целое) | ChEMBL | Последняя страница статьи по ChEMBL. |
+| ChEMBL.pubmed_id | Число (целое) | ChEMBL | PubMed ID из ChEMBL. |
+| ChEMBL.authors | Строка | ChEMBL | Список авторов из каталога ChEMBL. |
+| ChEMBL.source | Строка | ChEMBL | Источник данных для записи в ChEMBL. |
+
+### document_reference_csv — кураторский справочник документов (``dictionary/_curation/document.csv``)
+Назначение: переопределяет флаги качества и классификацию для отдельных документов.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| document_chembl_id | Строка | Кураторский CSV | Ключ документа ChEMBL. |
+| classification | Число (целое) | Кураторский CSV | Признак обзора (1) / экспериментальной (0) статьи. |
+| document_contains_external_links | Логический | Кураторский CSV | Флаг наличия внешних ссылок (регистрационные или коммерческие ресурсы). |
+| is_experimental_doc | Логический | Кураторский CSV | Флаг подтверждения, что статья экспериментальная. |
+
+### citation_reference_csv — статистика значимости цитирования (``dictionary/_curation/citation_fraction.csv``)
+Назначение: заданы пороги количества цитируемых активностей для классификации обзоров.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| N | Число (целое) | Кураторский CSV | Количество активностей в документе. |
+| K_min_significant | Число (целое) | Кураторский CSV | Минимальное число активностей, считающихся значимыми цитатами. |
+| test_used_at_threshold | Строка | Кураторский CSV | Статистический критерий, на котором рассчитан порог. |
+| p_value_at_threshold | Число (вещественное) | Кураторский CSV | p-value, использованное при расчёте порога. |
+
+### activity_csv — активности ChEMBL (``data/input/output.activity_*.csv``)
+Назначение: сырые записи биологических активностей для агрегирования статистики по документам и ассаям.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| activity_id | Число (целое) | Экспорт ChEMBL | Уникальный идентификатор записи активности. |
+| molecule_chembl_id | Строка | ChEMBL | Идентификатор молекулы, на которую снята активность. |
+| assay_chembl_id | Строка | ChEMBL | Идентификатор ассая, породившего запись. |
+| activity_comment | Строка | ChEMBL | Текстовый комментарий к активности. |
+| assay_description | Строка | ChEMBL | Описание ассая из источника активности. |
+| assay_variant_accession | Строка | ChEMBL | Accession варианта (если указано). |
+| assay_variant_mutation | Строка | ChEMBL | Описание мутации варианта цели. |
+| bao_format | Строка | ChEMBL | Формат биоассая (термин BAO). |
+| bao_label | Строка | ChEMBL | Метка BAO для активности. |
+| data_validity_comment | Строка | ChEMBL | Комментарий валидности данных. |
+| data_validity_description | Строка | ChEMBL | Расширенное описание валидности данных. |
+| document_chembl_id | Строка | ChEMBL | Связанный документ ChEMBL. |
+| pchembl_value | Число (вещественное) | ChEMBL | Значение pChEMBL (если рассчитано). |
+| potential_duplicate | Число (целое) | ChEMBL | Флаг потенциального дубликата (0/1). |
+| qudt_units | Строка | ChEMBL | Единицы измерения по онтологии QUDT. |
+| record_id | Число (целое) | ChEMBL | Внутренний идентификатор записи. |
+| relation | Строка | ChEMBL | Знак отношения («=», «<» и т. п.) исходного значения. |
+| src_assay_id | Число (целое) | ChEMBL | Идентификатор ассая в источнике. |
+| src_id | Число (целое) | ChEMBL | Идентификатор источника данных в ChEMBL. |
+| standard_relation | Строка | ChEMBL | Нормализованное отношение для стандартного значения. |
+| standard_units | Строка | ChEMBL | Единицы нормализованного значения. |
+| type | Строка | ChEMBL | Тип активности (IC50, Ki и т. п.). |
+| units | Строка | ChEMBL | Исходные единицы значения. |
+| value | Число (вещественное) | ChEMBL | Исходное числовое значение активности. |
+| standard_type | Строка | ChEMBL | Тип нормализованного значения. |
+| standard_value | Число (вещественное) | ChEMBL | Нормализованное числовое значение. |
+
+### activity_reference_csv — справочник активностей (``dictionary/_curation/activity.csv``)
+Назначение: минимальный набор полей для пересчёта агрегатов (используется при отсутствии сырых активностей).
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| activity_chembl_id | Число (целое) | Кураторский CSV | Идентификатор активности ChEMBL. |
+| assay_chembl_id | Строка | Кураторский CSV | Ассай, породивший активность. |
+| document_chembl_id | Строка | Кураторский CSV | Документ, к которому привязана активность. |
+| is_citation | Логический | Кураторский CSV | Флаг, что запись использована как цитата в обзоре. |
+| molecule_chembl_id | Строка | Кураторский CSV | Молекула из активности. |
+| saltform_id | Строка | Кураторский CSV | Идентификатор солевой формы (если указан). |
+| target_chembl_id | Строка | Кураторский CSV | Цель активности. |
+
+### assay_csv — исходные данные об ассях (``data/input/output.assay_*.csv``)
+Назначение: справочник биологических ассаях, загруженный из ChEMBL для дальнейшей нормализации и связывания с документами.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| assay_chembl_id | Строка | ChEMBL | Уникальный идентификатор ассая. |
+| assay_cell_type | Строка | ChEMBL | Тип клетки, использованной в ассае. |
+| assay_subcellular_fraction | Строка | ChEMBL | Подклеточная фракция (мембрана, цитозоль и т. п.). |
+| assay_tissue | Строка | ChEMBL | Тип ткани, использованной в ассае. |
+| bao_format | Строка | ChEMBL | Формат биоассая по BAO. |
+| description | Строка | ChEMBL | Описание ассая. |
+| document_chembl_id | Строка | ChEMBL | Документ-источник ассая. |
+| target_chembl_id | Строка | ChEMBL | Целевой объект ассая. |
+| aidx | Строка | ChEMBL | Внутренний идентификатор ChEMBL Assay Index. |
+| assay_category | Число (целое) | ChEMBL | Категория ассая. |
+| assay_classifications | Строка | ChEMBL | Классификации ассая (список). |
+| assay_group | Число (целое) | ChEMBL | Группа ассая. |
+| assay_organism | Строка | ChEMBL | Организм источника биоматериала. |
+| assay_parameters | Строка | ChEMBL | Параметры проведения ассая. |
+| assay_strain | Число (целое) | ChEMBL | Штамм организма. |
+| assay_tax_id | Число (целое) | ChEMBL | Таксономический идентификатор NCBI. |
+| assay_test_type | Строка | ChEMBL | Тип теста (biochemical, cellular и т. п.). |
+| assay_type | Строка | ChEMBL | Тип ассая (binding, functional и т. п.). |
+| assay_type_description | Строка | ChEMBL | Расширенное описание типа. |
+| assay_with_same_target | Число (целое) | ChEMBL | Количество других ассаев с той же целью. |
+| bao_label | Строка | ChEMBL | Описание в онтологии BAO. |
+| cell_chembl_id | Строка | ChEMBL | Идентификатор клетки. |
+| confidence_score | Число (целое) | ChEMBL | Балл уверенности в назначении цели. |
+| relationship_type | Строка | ChEMBL | Тип связи цели и активности. |
+| src_assay_id | Число (целое) | ChEMBL | Идентификатор ассая в первоисточнике. |
+| src_id | Число (целое) | ChEMBL | Идентификатор источника данных. |
+| tissue_chembl_id | Строка | ChEMBL | Идентификатор ткани. |
+| variant_sequence.isoform | Строка | ChEMBL | Указанный изоформ белка-цели. |
+| variant_sequence.mutation | Строка | ChEMBL | Мутация белка-цели. |
+| variant_sequence.sequence | Строка | ChEMBL | Последовательность варианта белка. |
+
+### testitem_csv — исходные данные по молекулам (``data/input/output.testitem_*.csv``)
+Назначение: справочник тестируемых веществ из ChEMBL для подготовки выходного «Test item».
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Строка | ChEMBL | Идентификатор молекулы. |
+| black_box_warning | Число (целое) | ChEMBL | Наличие предупреждения «black box» (0/1). |
+| first_approval | Число (вещественное) | ChEMBL | Год первого одобрения (если есть). |
+| max_phase | Число (вещественное) | ChEMBL | Максимальная фаза клинических испытаний. |
+| molecule_structures.canonical_smiles | Строка | ChEMBL | Канонический SMILES из структуры. |
+| molecule_structures.standard_inchi | Строка | ChEMBL | Стандартный InChI. |
+| molecule_structures.standard_inchi_key | Строка | ChEMBL | Стандартный InChIKey. |
+| molecule_type | Строка | ChEMBL | Тип молекулы (Small molecule, Antibody и т. п.). |
+| oral | Логический | ChEMBL | Флаг перорального применения. |
+| parenteral | Логический | ChEMBL | Флаг парентерального применения. |
+| pref_name | Строка | ChEMBL | Предпочитаемое название. |
+| pubchem_canonical_smiles | Строка | PubChem через ChEMBL | Канонический SMILES из PubChem. |
+| pubchem_cid | Число (вещественное) | PubChem | CID в PubChem. |
+| pubchem_inchi | Строка | PubChem | InChI из PubChem. |
+| pubchem_inchikey | Строка | PubChem | InChIKey из PubChem. |
+| pubchem_isomeric_smiles | Строка | PubChem | Изомерный SMILES из PubChem. |
+| pubchem_iupac_name | Строка | PubChem | Наименование IUPAC. |
+| pubchem_molecular_formula | Строка | PubChem | Молекулярная формула. |
+| structure_type | Строка | ChEMBL | Тип структуры (MOL, SEQ и т. п.). |
+| topical | Логический | ChEMBL | Флаг местного применения. |
+
+### testitem_reference_csv — кураторский справочник молекул (``dictionary/_curation/testitem.csv``)
+Назначение: переопределяет список имён и количество стереоцентров для отдельных молекул.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Строка | Кураторский CSV | Идентификатор молекулы. |
+| all_names | Строка | Кураторский CSV | Список альтернативных названий через «|». |
+| is_radical | Логический | Кураторский CSV | Признак радикальной формы. |
+| nstereo | Число (целое) | Кураторский CSV | Количество стереоцентров в эталонной записи. |
+| salt_chembl_id | Строка | Кураторский CSV | Идентификатор солевой формы. |
+| standard_inchi_skeleton | Строка | Кураторский CSV | Первая часть InChIKey (скелет). |
+| standard_inchi_stereo | Строка | Кураторский CSV | Стерео-часть InChIKey. |
+
+### target_csv — исходные данные по мишеням (``data/input/output.targets_*.csv``)
+Назначение: полный справочник целей из ChEMBL с данными UniProt, IUPHAR и Guide to PHARMACOLOGY, который нормализуется в итоговую таблицу Target.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| target_chembl_id | Строка | ChEMBL | Идентификатор мишени в ChEMBL. |
+| uniprot_id_primary | Строка | UniProt через ChEMBL | Основной UniProt ID. |
+| uniprot_ids_all | Строка | UniProt | Список всех UniProt ID. |
+| isoform_ids | Строка | UniProt | Список идентификаторов изоформ. |
+| isoform_names | Строка | UniProt | Имена изоформ. |
+| isoform_synonyms | Строка | UniProt | Синонимы изоформ. |
+| hgnc_id | Строка | HGNC через ChEMBL | Идентификатор гена HGNC. |
+| gene_symbol | Строка | HGNC | Символ гена. |
+| protein_name_canonical | Строка | UniProt | Каноническое название белка. |
+| protein_name_alt | Строка | UniProt | Альтернативные названия белка. |
+| organism | Строка | UniProt | Название организма. |
+| taxon_id | Число (целое) | UniProt/NCBI | Таксономический идентификатор. |
+| lineage_superkingdom | Строка | UniProt | Надцарство в таксономии. |
+| lineage_phylum | Строка | UniProt | Тип (phylum). |
+| lineage_class | Строка | UniProt | Класс. |
+| sequence_length | Число (целое) | UniProt | Длина белковой последовательности. |
+| features_signal_peptide | Строка | UniProt | Наличие сигнального пептида. |
+| features_transmembrane | Строка | UniProt | Отметка о трансмембранных доменах. |
+| features_topology | Строка | UniProt | Топология в UniProt. |
+| ptm_glycosylation | Строка | UniProt | Посттрансляционные модификации: гликозилирование. |
+| ptm_lipidation | Строка | UniProt | Посттрансляционные модификации: липидирование. |
+| ptm_disulfide_bond | Строка | UniProt | Дисульфидные связи. |
+| ptm_modified_residue | Строка | UniProt | Прочие модифицированные остатки. |
+| xref_chembl | Строка | ChEMBL | Перекрёстные ссылки на ChEMBL. |
+| xref_uniprot | Строка | UniProt | Перекрёстные ссылки на UniProt. |
+| xref_ensembl | Строка | Ensembl | Перекрёстные ссылки на Ensembl. |
+| xref_iuphar | Строка | IUPHAR | Перекрёстные ссылки на IUPHAR. |
+| gtop_target_id | Строка | Guide to PHARMACOLOGY | Идентификатор цели в GtoPdb. |
+| gtop_synonyms | Строка | Guide to PHARMACOLOGY | Синонимы цели из GtoPdb. |
+| gtop_natural_ligands_n | Число (целое) | GtoPdb | Количество натуральных лигандов. |
+| gtop_interactions_n | Число (целое) | GtoPdb | Количество известных взаимодействий. |
+| gtop_function_text_short | Строка | GtoPdb | Краткое описание функции. |
+| uniprot_last_update | Строка (дата) | UniProt | Дата последнего обновления записи. |
+| uniprot_version | Строка | UniProt | Версия записи UniProt. |
+| pipeline_version | Строка | Пайплайн ``target_csv`` | Версия выгрузки. |
+| timestamp_utc | Строка (дата-время) | Пайплайн ``target_csv`` | Метка времени формирования файла. |
+| pfam | Строка | Pfam | Список доменов Pfam. |
+| interpro | Строка | InterPro | Список аннотаций InterPro. |
+| xref_pdb | Строка | PDB | Список PDB идентификаторов. |
+| xref_alphafold | Строка | AlphaFold | Ссылки на модели AlphaFold. |
+| hgnc_name | Строка | HGNC | Название гена. |
+| uniProtkbId | Строка | UniProt | Основной идентификатор UniProtKB. |
+| secondaryAccessions | Строка | UniProt | Вторичные accession-номера. |
+| recommendedName | Строка | UniProt | Рекомендованное название (JSON из UniProt). |
+| geneName | Строка | UniProt | Структурированные данные по генам (JSON). |
+| secondaryAccessionNames | Строка | UniProt | Имена, связанные со вторичными accession. |
+| molecular_function | Строка | GO/UniProt | Функции GO (молекулярные). |
+| cellular_component | Строка | GO/UniProt | Локализация GO. |
+| subcellular_location | Строка | UniProt | Подклеточная локализация (текст). |
+| topology | Строка | UniProt | Топология по UniProt. |
+| transmembrane | Строка | UniProt | Описание трансмембранных сегментов. |
+| intramembrane | Строка | UniProt | Описание внутримембранных сегментов. |
+| glycosylation | Строка | UniProt | Подробные сведения о гликозилировании. |
+| lipidation | Строка | UniProt | Сведения о липидировании. |
+| disulfide_bond | Строка | UniProt | Сведения о дисульфидных мостиках. |
+| modified_residue | Строка | UniProt | Иные модифицированные остатки. |
+| phosphorylation | Строка | UniProt | Фосфорилированные позиции. |
+| acetylation | Строка | UniProt | Ацетилированные позиции. |
+| ubiquitination | Строка | UniProt | Убиквитинированные позиции. |
+| signal_peptide | Строка | UniProt | Сегменты сигнальных пептидов. |
+| propeptide | Строка | UniProt | Пропептиды. |
+| GuidetoPHARMACOLOGY | Строка | GtoPdb | Поле с данными Guide to PHARMACOLOGY. |
+| family | Строка | UniProt/ChEMBL | Семейство белков. |
+| SUPFAM | Строка | SUPFAM | Суперсемейства (структуры). |
+| PROSITE | Строка | PROSITE | Мотивы PROSITE. |
+| InterPro | Строка | InterPro | Дублирующее поле аннотаций InterPro. |
+| Pfam | Строка | Pfam | Дублирующее поле доменов Pfam. |
+| PRINTS | Строка | PRINTS | Отпечатки (motif fingerprints). |
+| TCDB | Строка | TCDB | Классификация транспортных белков. |
+| pref_name | Строка | ChEMBL | Предпочитаемое имя мишени в ChEMBL. |
+| target_type | Строка | ChEMBL | Тип мишени (например, SINGLE PROTEIN). |
+| tax_id | Число (целое) | ChEMBL | Таксономический идентификатор по ChEMBL. |
+| species_group_flag | Число (целое) | ChEMBL | Флаг принадлежности к группам организмов. |
+| target_components | Строка | ChEMBL | JSON с компонентами мишени. |
+| protein_classifications | Строка | ChEMBL | Классификации белка (JSON/pipe). |
+| cross_references | Строка | ChEMBL | Прочие перекрёстные ссылки. |
+| gene_symbol_list | Строка | ChEMBL | Список символов генов. |
+| protein_synonym_list | Строка | ChEMBL | Список синонимов белка. |
+| reactions | Строка | ChEMBL | Список реакций, связанных с мишенью. |
+| reaction_ec_numbers | Строка | ChEMBL | EC номера реакций. |
+| protein_class_pred_L1 | Строка | ChEMBL | Прогноз класса белка (уровень 1). |
+| protein_class_pred_L2 | Строка | ChEMBL | Прогноз класса белка (уровень 2). |
+| protein_class_pred_L3 | Строка | ChEMBL | Прогноз класса белка (уровень 3). |
+| protein_class_pred_rule_id | Строка | ChEMBL | Идентификатор правила классификации. |
+| protein_class_pred_evidence | Строка | ChEMBL | Тип доказательств классификации. |
+| protein_class_pred_confidence | Строка | ChEMBL | Уровень уверенности классификации. |
+| iuphar_target_id | Строка | IUPHAR | Идентификатор цели в IUPHAR. |
+| iuphar_family_id | Строка | IUPHAR | Идентификатор семейства в IUPHAR. |
+| iuphar_type | Строка | IUPHAR | Тип объекта по IUPHAR. |
+| iuphar_class | Строка | IUPHAR | Класс по IUPHAR. |
+| iuphar_subclass | Строка | IUPHAR | Подкласс по IUPHAR. |
+| iuphar_chain | Строка | IUPHAR | Цепь/субъединица IUPHAR. |
+| iuphar_name | Строка | IUPHAR | Имя по IUPHAR. |
+| iuphar_full_id_path | Строка | IUPHAR | Полный путь идентификаторов IUPHAR. |
+| iuphar_full_name_path | Строка | IUPHAR | Полный путь имён IUPHAR. |
+
+## Выходные таблицы
+
+### Document — нормализованные публикации (``data/output/document_postprocessed.csv``)
+Назначение: очищенный и нормализованный справочник документов для Power Query, дополненный агрегатами по активностям.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| PMID | Число (целое, Int64) | Производная из ``document_out``/``document_csv`` | Нормализованный PubMed ID (из нескольких источников). |
+| doi | Строка | Алгоритм валидации DOI | Консенсусный DOI после сопоставления PubMed, Crossref, OpenAlex и ChEMBL. |
+| sort_order | Строка | Постобработка документа | Строка сортировки ISSN+дата+PMID для детерминированного порядка. |
+| completed | Строка (YYYY-MM-DD) | Постобработка документа | Дата завершения индексирования (PubMed) или год ChEMBL. |
+| invalid_record | Логический | Постобработка документа | Флаг проблемной записи (несогласованные DOI/объём/номер). |
+| title | Строка | ``document_out`` с приоритетом PubMed | Итоговый заголовок после валидации и переименования. |
+| abstract | Строка | ``document_out`` с приоритетом PubMed | Итоговая аннотация. |
+| authors | Строка | ChEMBL/``document_out`` | Список авторов, нормализованный к нижнему регистру. |
+| PubMed.MeSH | Строка | PubMed/OpenAlex | Дескрипторы MeSH из PubMed либо OpenAlex. |
+| OpenAlex.MeSH | Строка | OpenAlex | Дескрипторы MeSH из OpenAlex. |
+| MeSH.qualifiers | Строка | PubMed/OpenAlex | Квалификаторы MeSH (PubMed с подстановкой OpenAlex). |
+| chemical_list | Строка | PubMed | Перечень химических веществ. |
+| ChEMBL.document_chembl_id | Строка | ChEMBL | Ключ документа ChEMBL. |
+| PubMed.publication_type | Строка | PubMed с alias-map | Нормализованный тип публикации PubMed. |
+| scholar.PublicationTypes | Строка | Semantic Scholar | Тип публикации из Semantic Scholar, очищенный. |
+| OpenAlex.publication_type | Строка | OpenAlex | Тип публикации из OpenAlex, нормализованный. |
+| OpenAlex.crossref_type | Строка | OpenAlex/Crossref | Тип Crossref, переданный OpenAlex. |
+| OpenAlex.Genre | Строка | OpenAlex | Жанр работы из OpenAlex. |
+| crossref.publication_type | Строка | Crossref | Тип публикации из Crossref. |
+| n_activity | Число (целое, Int64) | Агрегация ``activity`` | Количество записей активности, привязанных к документу. |
+| n_assay | Число (целое, Int64) | Агрегация ``activity`` | Число уникальных ассаях в документе. |
+| n_testitem | Число (целое, Int64) | Агрегация ``activity`` | Число уникальных молекул в документе. |
+| review | Логический | Постобработка документа | Итоговый флаг «обзор», вычисленный по голосам источников и справочнику. |
+| is_experimental | Логический | Постобработка документа | Инверсный флаг «экспериментальная» (¬review). |
+
+### Test item — нормализованные молекулы (``data/output/testitem_postprocessed.csv``)
+Назначение: компактный справочник молекул для сопоставления структур в Power Query.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| molecule_chembl_id | Строка | ``testitem_csv`` | Идентификатор молекулы ChEMBL. |
+| pref_name | Строка | ``testitem_csv``/кураторский справочник | Нормализованное предпочитаемое имя молекулы. |
+| all_names | Строка | ``testitem_reference_csv`` → ``testitem_csv`` | Объединённый список синонимов через «|». |
+| standard_inchi_key | Строка | ``testitem_csv`` | Стандартный InChIKey молекулы. |
+| canonical_smiles | Строка | ``testitem_csv`` | Канонический SMILES (предпочитая поле canonical_smiles). |
+| skeleton_inchi_key | Строка | Постобработка | Первые символы InChIKey для сравнения «скелета». |
+| unknown_chirality | Логический | Постобработка (nstereo vs. порог) | Флаг, что стереохимия неизвестна/неполна. |
+| invalid_record | Логический | Правила ``invalid_rules`` | Флаг проблемной записи (нет структуры или тип не соответствует ожиданиям). |
+
+### Assay — нормализованные ассая (``data/output/assay_postprocessed.csv``)
+Назначение: справочник ассаев, очищенный от шумовых полей и дополненный числом ассаев на документ.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| assay_chembl_id | Строка | ``assay_csv`` | Идентификатор ассая ChEMBL. |
+| document_chembl_id | Строка | ``assay_csv`` | Документ-источник. |
+| target_chembl_id | Строка | ``assay_csv`` | Целевая сущность ассая. |
+| assay_category | Строка | ``assay_csv`` | Категория ассая (строка после типизации). |
+| assay_group | Строка | ``assay_csv`` | Группа ассая. |
+| assay_type | Строка | ``assay_csv`` | Тип (binding/functional). |
+| assay_type_description | Строка | ``assay_csv`` | Расшифровка типа. |
+| assay_organism | Строка | ``assay_csv`` | Организм, из которого получен материал. |
+| assay_test_type | Строка | ``assay_csv`` | Тип теста (biochemical/cellular). |
+| assay_cell_type | Строка | ``assay_csv`` | Тип клетки. |
+| assay_tissue | Строка | ``assay_csv`` | Ткань. |
+| assay_with_same_target | Число (целое, Int64) | ``assay_csv`` | Количество других ассаев с той же целью по данным ChEMBL. |
+| bao_format | Строка | ``assay_csv`` | Формат BAO. |
+| bao_label | Строка | ``assay_csv`` | Описание BAO. |
+| aidx | Строка | ``assay_csv`` | Assay Index. |
+| assay_classifications | Строка | ``assay_csv`` | Списки классификаций. |
+| assay_parameters | Строка | ``assay_csv`` | Параметры эксперимента. |
+| assay_subcellular_fraction | Строка | ``assay_csv`` | Подклеточная фракция. |
+| cell_chembl_id | Строка | ``assay_csv`` | Идентификатор клетки. |
+| description | Строка | ``assay_csv`` | Текстовое описание. |
+| src_assay_id | Строка | ``assay_csv`` | Идентификатор в первоисточнике. |
+| src_id | Число (целое, Int64) | ``assay_csv`` | Источник данных. |
+| tissue_chembl_id | Строка | ``assay_csv`` | Идентификатор ткани. |
+| sequence | Строка | ``assay_csv`` | Последовательность варианта белка (из поля variant_sequence.sequence). |
+| mutation | Строка | ``assay_csv`` | Мутация варианта. |
+| isoform | Строка | ``assay_csv`` | Изоформа. |
+| document_assay_total | Число (целое, Int64) | Агрегация ``activity`` | Количество уникальных ассаев, связанных с документом. |
+
+### Target — нормализованные мишени (``data/output/target_postprocessed.csv``)
+Назначение: очищенный справочник белковых мишеней с унифицированными наименованиями и классификациями.
+
+| Колонка | Тип данных | Источник | Описание |
+| --- | --- | --- | --- |
+| target_chembl_id | Строка | ``target_csv`` | Идентификатор мишени ChEMBL. |
+| uniprot_id_primary | Строка | ``target_csv`` | Основной UniProt ID. |
+| recommended_name | Строка | Постобработка | Итоговое рекомендуемое название (предпочтение canonical). |
+| gene_name | Строка | Постобработка | Итоговый символ гена в нижнем регистре. |
+| synonyms | Строка | Постобработка | Консолидированный список синонимов (pipe) после очистки. |
+| protein_class_pred_L1 | Строка | Постобработка | Итоговый прогноз класса белка (уровень 1) после объединения источников. |
+| protein_class_pred_L2 | Строка | Постобработка | Прогноз класса (уровень 2). |
+| protein_class_pred_L3 | Строка | Постобработка | Прогноз класса (уровень 3). |
+| protein_class_pred_rule_id | Строка | Постобработка | Идентификатор правила, определившего прогноз. |
+| protein_class_pred_evidence | Строка | Постобработка | Тип доказательств для прогноза. |
+| protein_class_pred_confidence | Строка | Постобработка | Уверенность прогноза. |
+| taxon_id | Число (целое, Int64) | ``target_csv`` | Таксономический идентификатор. |
+| lineage_superkingdom | Строка | ``target_csv`` | Надцарство. |
+| lineage_phylum | Строка | ``target_csv`` | Тип (phylum). |
+| lineage_class | Строка | ``target_csv`` | Класс. |
+| reaction_ec_numbers | Строка | Постобработка | Список EC номеров реакций в виде pipe. |
+| cellularity | Строка | Постобработка | Классификация «unicellular/multicellular/other» по филогенезу. |
+| multifunctional_enzyme | Строка | Постобработка | Флаг ("true"/"false"), указывающий на несколько EC классов. |
+| iuphar_name | Строка | ``target_csv`` | Имя по IUPHAR. |
+| iuphar_target_id | Строка | ``target_csv`` | Идентификатор IUPHAR. |
+| iuphar_family_id | Строка | ``target_csv`` | Семейство IUPHAR. |
+| iuphar_type | Строка | ``target_csv`` | Тип объекта IUPHAR. |
+| iuphar_class | Строка | ``target_csv`` | Класс IUPHAR. |
+| iuphar_subclass | Строка | ``target_csv`` | Подкласс IUPHAR. |
+| iuphar_chain | Строка | ``target_csv`` | Цепь/субъединица IUPHAR. |
+| iuphar_full_id_path | Строка | ``target_csv`` | Полный путь идентификаторов IUPHAR. |
+| iuphar_full_name_path | Строка | ``target_csv`` | Полный путь имён IUPHAR. |
