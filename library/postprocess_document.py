@@ -304,9 +304,7 @@ def _build_completed(row: pd.Series) -> str:
         text = to_text(value)
         if not text:
             return "0" * digits
-        digits_only = _sanitize_digits(text)
-        normalized = digits_only or text
-        return normalized.zfill(digits)
+        return text.zfill(digits)
 
     completed_year = component("completed.year", 4)
     completed_month = component("completed.month", 2)
