@@ -10,6 +10,7 @@ source:
 files:
 
   document_csv: "e:\github\ChEMBL_data_acquisition\data\output\document\output.document_20250924.csv"
+  document_reference_csv: "e:\github\ChEMBL_data_acquisition\data\output\document\output.document_reference_20250924.csv"
   activity_csv: "e:\github\ChEMBL_data_acquisition\data\output\activity\output.activity_20250921.csv"
   citation_fraction_csv: "e:\github\ChEMBL_data_acquisition\dictionary\_Curation\citation_fraction.csv"
   testitem_csv: "e:\github\ChEMBL_data_acquisition\data\output\testitem\output.testitem_20250925.csv"
