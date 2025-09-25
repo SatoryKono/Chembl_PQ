@@ -9,8 +9,8 @@ import pandas as pd
 from library import loaders
 
 
-def _build_config(base_path: Path, file_name: str) -> dict:
-    return {
+def _build_config(base_path: Path, file_name: str, *, extra_io: dict[str, Any] | None = None) -> dict:
+    io_config = {
         "source": {"kind": "file", "base_path": str(base_path)},
         "files": {"sample": file_name},
         "io": {
@@ -22,6 +22,9 @@ def _build_config(base_path: Path, file_name: str) -> dict:
         },
         "outputs": {"dir": str(base_path), "line_terminator": "\n"},
     }
+    if extra_io:
+        io_config["io"].update(extra_io)
+    return io_config
 
 
 def test_read_csv(tmp_path: Path) -> None:
@@ -51,6 +54,22 @@ def test_read_csv_sets_low_memory(monkeypatch, tmp_path: Path) -> None:
     loaders.read_csv("sample", config)
 
     assert captured["kwargs"]["low_memory"] is False
+
+
+def test_read_csv_with_encoding_fallback(tmp_path: Path) -> None:
+    sample_path = tmp_path / "input_cp1251.csv"
+    raw_text = "col1,тест\n1,привет\n"
+    sample_path.write_bytes(raw_text.encode("cp1251"))
+    config = _build_config(
+        tmp_path,
+        "input_cp1251.csv",
+        extra_io={"encoding_fallbacks": ["cp1251"]},
+    )
+
+    df = loaders.read_csv("sample", config)
+
+    assert "тест" in df.columns
+    assert df.at[0, "тест"] == "привет"
 
 
 def test_write_csv(tmp_path: Path) -> None:
