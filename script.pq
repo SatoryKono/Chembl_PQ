@@ -1,4 +1,6 @@
 let
+  // ===== Changelog =====
+  // 2024-10-14: Restore protein_class_pred_* columns by retaining IUPHAR predictions in target export.
   // ===== Parameters =====
   // Paths: relative file locations. Encodings: named code pages. Delimiters: reusable separators. PathEncodingKeys: map path keys to encoding keys. Defaults: fallback keys for loaders. Tables: logical dataset handles for inputs/outputs.
   Parameters = [
@@ -437,6 +439,68 @@ let
               trimmed
         in
           normalized,
+      hasContent = (value as any) as logical =>
+        if value = null then
+          false
+        else if Value.Is(value, type number) then
+          value <> 0
+        else if Value.Is(value, type text) then
+          let
+            normalized = normalizeWhitespace(value, false)
+          in
+            normalized <> null and normalized <> "0"
+        else
+          true,
+      firstNonEmpty = (values as list) as any =>
+        let
+          filtered = List.Select(values, each hasContent(_)),
+          result =
+            if List.IsEmpty(filtered) then
+              null
+            else
+              let
+                firstValue = filtered{0}
+              in
+                if Value.Is(firstValue, type text) then normalizeWhitespace(firstValue, false) else firstValue
+        in
+          result,
+      coalesceColumns = (tbl as table, target as text, sources as list, optional columnType as nullable type) as table =>
+        let
+          normalizedSources = normalizeColumnList(sources),
+          availableSources = List.Select(normalizedSources, each List.Contains(Table.ColumnNames(tbl), _)),
+          ensured = ensureColumn(tbl, target, null, columnType),
+          tempName = target & "_coalesced",
+          typeText = type text,
+          typeNullableText = type nullable text,
+          needsTextConversion = columnType <> null and (columnType = typeText or columnType = typeNullableText),
+          effectiveType = if columnType = null then type any else columnType,
+          withTemp = Table.AddColumn(
+            ensured,
+            tempName,
+            each
+              let
+                currentValue = Record.Field(_, target),
+                candidates = {currentValue} & List.Transform(availableSources, each Record.FieldOrDefault(_, _, null)),
+                selected = firstNonEmpty(candidates),
+                typedValue =
+                  if not needsTextConversion then
+                    selected
+                  else if selected = null then
+                    null
+                  else
+                    let
+                      asText = try Text.From(selected) otherwise null,
+                      normalized = if asText = null then null else normalizeWhitespace(asText, false)
+                    in
+                      normalized
+              in
+                typedValue,
+            effectiveType
+          ),
+          withoutOriginal = Table.RemoveColumns(withTemp, {target}),
+          renamed = Table.RenameColumns(withoutOriginal, {{tempName, target}}, MissingField.Ignore)
+        in
+          renamed,
       cleanPipe = (txt as any, optional alias as nullable record, optional drop as nullable list, optional sort as nullable logical) as text =>
         let
           normalized = normalizeWhitespace(txt),
@@ -796,7 +860,8 @@ let
         SelectColumnsInOrder = selectColumnsInOrder,
         SplitPipeList = splitPipeList,
         ReplaceTextInColumn = replaceTextInColumn,
-        ZipLists = zipLists
+        ZipLists = zipLists,
+        CoalesceColumns = coalesceColumns
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -1023,14 +1088,12 @@ let
             "scholar.SemanticScholarId",
             "scholar.ExternalIds",
             "scholar.Error",
-            "OpenAlex.PMID",
             "OpenAlex.DOI",
             "OpenAlex.PublicationTypes",
             "OpenAlex.TypeCrossref",
             "OpenAlex.Genre",
             "OpenAlex.Venue",
             "OpenAlex.MeshDescriptors",
-            "OpenAlex.MeshQualifiers",
             "OpenAlex.Id",
             "OpenAlex.Error",
             "crossref.DOI",
@@ -1047,14 +1110,12 @@ let
             "ChEMBL.title",
             "ChEMBL.abstract",
             "ChEMBL.doi",
-            "ChEMBL.year",
             "ChEMBL.journal",
             "ChEMBL.journal_abbrev",
             "ChEMBL.volume",
             "ChEMBL.issue",
             "ChEMBL.first_page",
             "ChEMBL.last_page",
-            "ChEMBL.pubmed_id",
             "ChEMBL.authors",
             "ChEMBL.source"
           },
@@ -1270,8 +1331,7 @@ let
               {"ChEMBL.journal_abbrev", "journal"},
               {"ChEMBL.volume", "volume"},
               {"ChEMBL.issue", "issue"},
-              {"ChEMBL.authors", "authors"},
-              {"ChEMBL.year", "year"}
+              {"ChEMBL.authors", "authors"}
             }
           ),
           filledNulls = ReplaceNullWithValue(renamedMeta, {"volume", "issue", "ChEMBL.first_page", "ChEMBL.last_page"}, 0),
@@ -1346,11 +1406,11 @@ let
             {
               {"OpenAlex.PublicationTypes", "publication_type"},
               {"OpenAlex.TypeCrossref", "crossref_type"},
-              {"OpenAlex.MeshDescriptors", "MeSH.descriptors"}
+              {"OpenAlex.MeshDescriptors", "MeSH.descriptors"},
+              {"OpenAlex.MeshQualifiers", "OpenAlex.MeSH.qualifiers"}
             }
           ),
-          dropQualifiers = RemoveColumnsSafe(renamedMeta, {"OpenAlex.MeshQualifiers"}),
-          renamedIds2 = RenameColumnsSafe(dropQualifiers, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
+          renamedIds2 = RenameColumnsSafe(renamedMeta, {{"OpenAlex.Id", "id"}, {"OpenAlex.Error", "Error"}}),
           lowered = LowercaseColumns(renamedIds2, {"MeSH.descriptors", "crossref_type", "OpenAlex.DOI", "DOI"}),
           removedDoi = RemoveColumnsSafe(lowered, {"DOI"}),
           final = RenameColumnsSafe(removedDoi, {{"OpenAlex.DOI", "OpenAlex.doi"}})
@@ -1446,31 +1506,41 @@ let
           withChEMBL = ExpandTableColumnSafe(
             joinChEMBL,
             "ChEMBL",
-            {"title", "abstract", "ChEMBL.doi", "volume", "issue", "page", "authors", "document_chembl_id"},
-            {"ChEMBL.title", "ChEMBL.abstract", "ChEMBL.doi", "ChEMBL.volume", "ChEMBL.issue", "ChEMBL.page", "authors", "ChEMBL.document_chembl_id"}
+            {"title", "abstract", "ChEMBL.doi", "volume", "issue", "page", "authors", "document_chembl_id", "ChEMBL.pubmed_id", "ChEMBL.year"},
+            {"ChEMBL.title", "ChEMBL.abstract", "ChEMBL.doi", "ChEMBL.volume", "ChEMBL.issue", "ChEMBL.page", "authors", "ChEMBL.document_chembl_id", "ChEMBL.pubmed_id", "ChEMBL.year"}
           ),
           joinScholar = Table.NestedJoin(withChEMBL, {"PMID"}, scholar, {"scholar.PMID"}, "Scholar", JoinKind.LeftOuter),
           withScholar = ExpandTableColumnSafe(
             joinScholar,
             "Scholar",
-            {"scholar.doi", "scholar.PublicationTypes", "scholar.Venue", "scholar.Error"}
+            {"scholar.doi", "scholar.PublicationTypes", "scholar.Venue", "scholar.Error", "scholar.PMID"}
           ),
           joinOpenAlex = Table.NestedJoin(withScholar, {"PMID"}, openAlex, {"OpenAlex.PMID"}, "OpenAlex", JoinKind.LeftOuter),
           withOpenAlex = ExpandTableColumnSafe(
             joinOpenAlex,
             "OpenAlex",
-            {"OpenAlex.doi", "publication_type", "crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "MeSH.descriptors", "Error"},
-            {"OpenAlex.doi", "OpenAlex.publication_type", "OpenAlex.crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "OpenAlex.MeSH.descriptors", "OpenAlex.Error"}
+            {"OpenAlex.doi", "publication_type", "crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "MeSH.descriptors", "Error", "OpenAlex.PMID", "OpenAlex.MeSH.qualifiers"},
+            {"OpenAlex.doi", "OpenAlex.publication_type", "OpenAlex.crossref_type", "OpenAlex.Genre", "OpenAlex.Venue", "OpenAlex.MeSH.descriptors", "OpenAlex.Error", "OpenAlex.PMID", "OpenAlex.MeSH.qualifiers"}
           ),
           joinCrossRef = Table.NestedJoin(withOpenAlex, {"PMID"}, crossRef, {"crossref.PMID"}, "CrossRef", JoinKind.LeftOuter),
+          digitChars = List.Transform({0..9}, each Text.From(_)),
           merged = ExpandTableColumnSafe(
             joinCrossRef,
             "CrossRef",
-            {"crossref.doi", "publication_type", "crossref.Subtype", "title", "crossref.Subtitle", "crossref.Subject", "Error"},
-            {"crossref.doi", "crossref.publication_type", "crossref.crossref.Subtype", "crossref.title", "crossref.crossref.Subtitle", "crossref.crossref.Subject", "crossref.Error"}
-          )
+            {"crossref.doi", "publication_type", "crossref.Subtype", "title", "crossref.Subtitle", "crossref.Subject", "Error", "crossref.PMID"},
+            {"crossref.doi", "crossref.publication_type", "crossref.crossref.Subtype", "crossref.title", "crossref.crossref.Subtitle", "crossref.crossref.Subject", "crossref.Error", "crossref.PMID"}
+          ),
+          pmidFallbackColumns = {"ChEMBL.pubmed_id", "scholar.PMID", "crossref.PMID", "OpenAlex.PMID"},
+          withPmid = Helpers[CoalesceColumns](merged, "PMID", pmidFallbackColumns, type text),
+          sanitizePmid = (value as any) as nullable text =>
+            let
+              normalized = NormalizeWhitespace(value, false),
+              digitsOnly = if normalized = null then null else Text.Select(normalized, digitChars)
+            in
+              if digitsOnly = null or digitsOnly = "" then null else digitsOnly,
+          pmidSanitized = Table.TransformColumns(withPmid, {{"PMID", sanitizePmid, type text}})
         in
-          merged
+          pmidSanitized
       in
         [
           FromPubMed = fromPubMed,
@@ -1726,6 +1796,7 @@ let
               "crossref_doi_raw",
               "openalex_doi_raw",
               "peers_valid_distinct",
+              "ChEMBL.year",
               "new_title",
               "new_abstract",
               "new_page",
@@ -1801,10 +1872,18 @@ let
     let
       BuildValidationFrame = (validated as table) as table =>
         let
+          invalidSupportThreshold = 2,
           invalidFlag = Table.AddColumn(
             validated,
             "invalid_record",
-            each ([consensus_support] <= 2) or ([invalid_issue] = true) or ([invalid_volume] = true),
+            each
+              let
+                supportRaw = Record.FieldOrDefault(_, "consensus_support", null),
+                supportValue = if supportRaw = null then 0 else try Number.From(supportRaw) otherwise 0,
+                invalidIssue = Record.FieldOrDefault(_, "invalid_issue", null) = true,
+                invalidVolume = Record.FieldOrDefault(_, "invalid_volume", null) = true
+              in
+                supportValue <= invalidSupportThreshold or invalidIssue or invalidVolume,
             type logical
           ),
           withoutOriginals = Table.RemoveColumns(
@@ -1829,26 +1908,57 @@ let
             },
             MissingField.Ignore
           ),
+          qualifiersFilled = Helpers[CoalesceColumns](renamedDraft, "PubMed.MeSH_Qualifiers", {"OpenAlex.MeSH.qualifiers"}, type text),
           withCompleted = Table.AddColumn(
-            renamedDraft,
+            qualifiersFilled,
             "completed",
             each
               let
-                cy = Text.PadStart(Text.From([completed.year]), 4, "0"),
-                cm = Text.PadStart(Text.From([completed.month]), 2, "0"),
-                cd = Text.PadStart(Text.From([completed.day]), 2, "0"),
-                ry = Text.PadStart(Text.From([revised.year]), 4, "0"),
-                rm = Text.PadStart(Text.From([revised.month]), 2, "0"),
-                rd = Text.PadStart(Text.From([revised.day]), 2, "0"),
-                hasCompleted = (cy <> "0000") and (cm <> "00") and (cd <> "00")
+                getComponent = (fieldName as text, digits as number) as text =>
+                  let
+                    rawValue = Record.FieldOrDefault(_, fieldName, null),
+                    normalized = NormalizeWhitespace(rawValue, false)
+                  in
+                    if normalized = null or normalized = "" then Text.Repeat("0", digits) else Text.PadStart(normalized, digits, "0"),
+                completedYear = getComponent("completed.year", 4),
+                completedMonth = getComponent("completed.month", 2),
+                completedDay = getComponent("completed.day", 2),
+                revisedYear = getComponent("revised.year", 4),
+                revisedMonth = getComponent("revised.month", 2),
+                revisedDay = getComponent("revised.day", 2),
+                hasCompleted = (completedYear <> "0000") and (completedMonth <> "00") and (completedDay <> "00"),
+                hasRevised = (revisedYear <> "0000") and (revisedMonth <> "00") and (revisedDay <> "00"),
+                chemblYearRaw = Record.FieldOrDefault(_, "ChEMBL.year", null),
+                chemblYearNorm = NormalizeWhitespace(chemblYearRaw, false),
+                chemblDate = if chemblYearNorm = null or chemblYearNorm = "" then null else Text.PadStart(chemblYearNorm, 4, "0") & "-00-00",
+                completedDate = if hasCompleted then completedYear & "-" & completedMonth & "-" & completedDay else null,
+                revisedDate = if hasRevised then revisedYear & "-" & revisedMonth & "-" & revisedDay else null,
+                fallbackDate = if revisedDate <> null then revisedDate else chemblDate,
+                finalDate = if completedDate <> null then completedDate else fallbackDate
               in
-                if hasCompleted then cy & "-" & cm & "-" & cd else ry & "-" & rm & "-" & rd,
+                if finalDate <> null then finalDate else "0000-00-00",
             type text
           ),
           withSort = Table.AddColumn(
             withCompleted,
             "sort_order",
-            each [ISSN] & ":" & [completed] & ":" & Text.PadStart(Text.From([PMID]), 8, "0"),
+            each
+              let
+                issnRaw = Record.FieldOrDefault(_, "ISSN", null),
+                issnValue =
+                  let
+                    normalized = NormalizeWhitespace(issnRaw, false)
+                  in
+                    if normalized = null or normalized = "" then "unknown" else normalized,
+                completedValue =
+                  let
+                    normalized = NormalizeWhitespace(Record.FieldOrDefault(_, "completed", null), false)
+                  in
+                    if normalized = null or normalized = "" then "0000-00-00" else normalized,
+                pmidText = NormalizeWhitespace(Record.FieldOrDefault(_, "PMID", null), false),
+                pmidValue = if pmidText = null or pmidText = "" then "00000000" else Text.PadStart(pmidText, 8, "0")
+              in
+                issnValue & ":" & completedValue & ":" & pmidValue,
             type text
           ),
           withoutVerbose = Table.RemoveColumns(
@@ -3536,7 +3646,19 @@ let
           dropPrediction = PredCols,
           expandPrediction = PredColsForExpansion,
           dropIupharId = IupharIdCols,
-          dropForKnown = List.Combine({dropPrediction, {"ec_number", "gene_name", "synonyms", "organism", "taxon_id", "lineage_superkingdom", "lineage_phylum", "lineage_class", "cellularity", "multifunctional_enzyme", "known_id"}}),
+          dropForKnown = {
+            "ec_number",
+            "gene_name",
+            "synonyms",
+            "organism",
+            "taxon_id",
+            "lineage_superkingdom",
+            "lineage_phylum",
+            "lineage_class",
+            "cellularity",
+            "multifunctional_enzyme",
+            "known_id"
+          },
           mergeIuphar = (src as table) as table =>
             let
               trimmed = Drop(src, List.Combine({dropPrediction, dropIupharId})),
@@ -3729,32 +3851,13 @@ let
   // Назначение: объединение таргетных атрибутов и справочников IUPHAR.
   get_target = () =>
     let
-      classificationColumns = {
+      predictionColumns = {
         "protein_class_pred_L1",
         "protein_class_pred_L2",
         "protein_class_pred_L3",
         "protein_class_pred_rule_id",
         "protein_class_pred_evidence",
-        "protein_class_pred_confidence",
-        "protein_classifications",
-        "iuphar_target_id",
-        "iuphar_family_id",
-        "iuphar_type",
-        "iuphar_class",
-        "iuphar_subclass",
-        "iuphar_chain",
-        "iuphar_name",
-        "iuphar_full_id_path",
-        "iuphar_full_name_path"
-      },
-      organismAttributes = {
-        "taxon_id",
-        "lineage_superkingdom",
-        "lineage_phylum",
-        "lineage_class",
-        "reaction_ec_numbers",
-        "cellularity",
-        "multifunctional_enzyme"
+        "protein_class_pred_confidence"
       },
       iupharAttributes = {
         "iuphar_name",
@@ -3766,6 +3869,17 @@ let
         "iuphar_chain",
         "iuphar_full_id_path",
         "iuphar_full_name_path"
+      },
+      columnsToDropFromMain = List.Combine({predictionColumns, {"protein_classifications"}, iupharAttributes}),
+      iupharColumns = List.Combine({predictionColumns, iupharAttributes}),
+      organismAttributes = {
+        "taxon_id",
+        "lineage_superkingdom",
+        "lineage_phylum",
+        "lineage_class",
+        "reaction_ec_numbers",
+        "cellularity",
+        "multifunctional_enzyme"
       },
       outputColumns = {
         "target_chembl_id",
@@ -3797,7 +3911,7 @@ let
         "iuphar_full_name_path"
       },
       baseMain = TargetHandlers[main](Data[Target_out]),
-      sanitizedMain = DropColumns(baseMain, classificationColumns),
+      sanitizedMain = DropColumns(baseMain, columnsToDropFromMain),
       organismSource = TargetHandlers[organism](Data[Target_out]),
       organismTable = Table.Buffer(
         SelectColumnsSafe(
@@ -3817,7 +3931,7 @@ let
       iupharTable = Table.Buffer(
         SelectColumnsSafe(
           TargetHandlers[IUPHAR](),
-          List.Combine({{"target_chembl_id"}, iupharAttributes})
+          List.Combine({{"target_chembl_id"}, iupharColumns})
         )
       ),
       withIuphar = JoinAndExpand(
@@ -3826,8 +3940,8 @@ let
         iupharTable,
         {"target_chembl_id"},
         "IUPHAR",
-        iupharAttributes,
-        iupharAttributes
+        iupharColumns,
+        iupharColumns
       ),
       ordered = SelectColumnsInOrder(withIuphar, outputColumns)
     in
