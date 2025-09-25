@@ -1,5 +1,7 @@
 let
   // ===== Changelog =====
+  // 2024-10-16: Backfill document export core metadata fields from merged source data.
+  // 2024-10-15: Guarantee document export contains core metadata columns via schema completion.
   // 2024-10-14: Restore protein_class_pred_* columns by retaining IUPHAR predictions in target export.
   // ===== Parameters =====
   // Paths: relative file locations. Encodings: named code pages. Delimiters: reusable separators. PathEncodingKeys: map path keys to encoding keys. Defaults: fallback keys for loaders. Tables: logical dataset handles for inputs/outputs.
@@ -533,6 +535,17 @@ let
               Table.AddColumn(tbl, columnName, each defaultValue)
         in
           result,
+      ensureColumns = (tbl as table, columnNames as list) as table =>
+        let
+          sanitized = normalizeColumnList(columnNames),
+          result =
+            List.Accumulate(
+              sanitized,
+              tbl,
+              (state as table, columnName as text) => ensureColumn(state, columnName, null, null)
+            )
+        in
+          result,
       zipLists = (firstList as list, secondList as list) as list =>
         let
           firstCount = List.Count(firstList),
@@ -843,6 +856,7 @@ let
         NormalizeWhitespace = normalizeWhitespace,
         CleanPipe = cleanPipe,
         EnsureColumn = ensureColumn,
+        EnsureColumns = ensureColumns,
         PromoteHeadersSafe = promoteHeadersSafe,
         TransformColumnTypesSafe = transformColumnTypesSafe,
         NormalizePages = normalizePages,
@@ -867,6 +881,7 @@ let
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
   CleanPipe = Helpers[CleanPipe],
   EnsureColumn = Helpers[EnsureColumn],
+  EnsureColumns = Helpers[EnsureColumns],
   PromoteHeadersSafe = Helpers[PromoteHeadersSafe],
   TransformColumnTypesSafe = Helpers[TransformColumnTypesSafe],
   NormalizePages = Helpers[NormalizePages],
@@ -1886,9 +1901,39 @@ let
                 supportValue <= invalidSupportThreshold or invalidIssue or invalidVolume,
             type logical
           ),
-          withoutOriginals = Table.RemoveColumns(
+          coalescedDoi = Helpers[CoalesceColumns](
             invalidFlag,
-            {"title", "abstract", "volume", "issue", "page"},
+            "selected_doi",
+            {"PubMed.doi", "ChEMBL.doi", "crossref.doi", "OpenAlex.doi"},
+            type text
+          ),
+          coalescedTitle = Helpers[CoalesceColumns](
+            coalescedDoi,
+            "new_title",
+            {"title", "ChEMBL.title", "crossref.title"},
+            type text
+          ),
+          coalescedAbstract = Helpers[CoalesceColumns](
+            coalescedTitle,
+            "new_abstract",
+            {"abstract", "ChEMBL.abstract"},
+            type text
+          ),
+          coalescedPage = Helpers[CoalesceColumns](
+            coalescedAbstract,
+            "new_page",
+            {"page", "ChEMBL.page"},
+            type text
+          ),
+          coalescedAuthors = Helpers[CoalesceColumns](
+            coalescedPage,
+            "authors",
+            {"ChEMBL.authors"},
+            type text
+          ),
+          withoutOriginals = Table.RemoveColumns(
+            coalescedAuthors,
+            {"title", "abstract", "page", "volume", "issue", "ChEMBL.title", "ChEMBL.abstract", "ChEMBL.page"},
             MissingField.Ignore
           ),
           withoutNoise = Table.RemoveColumns(
@@ -2213,7 +2258,8 @@ let
           ApplyDocumentSchema = (tbl as table) as table =>
             let
               renamed = RenameColumnsSafe(tbl, documentSchema[Rename]),
-              typed = Helpers[TransformColumnTypesSafe](renamed, documentSchema[Type]),
+              ensured = EnsureColumns(renamed, documentSchema[Order]),
+              typed = TransformColumnTypesSafe(ensured, documentSchema[Type]),
               selected = SelectColumnsSafe(typed, documentSchema[Order]),
               ordered = Table.ReorderColumns(selected, documentSchema[Order], MissingField.Ignore)
             in
