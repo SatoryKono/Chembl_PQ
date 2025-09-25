@@ -18,7 +18,7 @@ files:
   activity_csv: "e:\github\ChEMBL_data_acquisition\data\output\activity\output.activity_20250921.csv"  
   assay_csv:    "e:\github\ChEMBL_data_acquisition\data\output\assay\output.assay_20250924.csv"
   target_csv:   "e:\github\ChEMBL_data_acquisition\data\output\target\output.targets_20250924.csv"
-
+  document_out_csv: "e:\github\Chembl_PQ\data\output\document\output.document_20250924.csv"
 
 io:
   encoding_in: utf8
