@@ -124,14 +124,9 @@ pipeline:
       OpenAlex.crossref_type: string
       OpenAlex.Genre: string
       crossref.publication_type: string
-      significant_citations_fraction: bool
-      document_contains_external_links: bool
-      is_experimental_doc: bool
       n_activity: Int64
-      citations: Int64
       n_assay: Int64
       n_testitem: Int64
-      n_responces: Int64
       review: bool
       is_experimental: bool
     column_order:
@@ -154,14 +149,9 @@ pipeline:
       - OpenAlex.crossref_type
       - OpenAlex.Genre
       - crossref.publication_type
-      - significant_citations_fraction
-      - document_contains_external_links
-      - is_experimental_doc
       - n_activity
-      - citations
       - n_assay
       - n_testitem
-      - n_responces
       - review
       - is_experimental
     formatters:

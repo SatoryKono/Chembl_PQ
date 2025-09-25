@@ -136,7 +136,6 @@ pipeline:
       OpenAlex.crossref_type: string
       OpenAlex.Genre: string
       crossref.publication_type: string
-      significant_citations_fraction: bool     
       n_activity: Int64
       n_assay: Int64
       n_testitem: Int64
@@ -162,14 +161,9 @@ pipeline:
       - OpenAlex.crossref_type
       - OpenAlex.Genre
       - crossref.publication_type
-      - significant_citations_fraction
-      - document_contains_external_links
-      - is_experimental_doc
       - n_activity
-      - citations
       - n_assay
       - n_testitem
-      - n_responces
       - review
       - is_experimental
     formatters:

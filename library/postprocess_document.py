@@ -85,6 +85,15 @@ LOWER_CASE_COLUMNS: tuple[str, ...] = (
 )
 
 
+REMOVED_OUTPUT_COLUMNS: tuple[str, ...] = (
+    "significant_citations_fraction",
+    "document_contains_external_links",
+    "is_experimental_doc",
+    "citations",
+    "n_responces",
+)
+
+
 def _sanitize_digits(value: Any) -> str:
     text = to_text(value)
     digits = "".join(ch for ch in text if ch.isdigit())
@@ -555,6 +564,18 @@ def _build_validation_frame(validated: pd.DataFrame) -> pd.DataFrame:
             result["PubMed.MeSH_Qualifiers"], result["OpenAlex.MeSH.qualifiers"]
         )
 
+    alias_columns = {
+        "completed.year": "PubMed.YearCompleted",
+        "completed.month": "PubMed.MonthCompleted",
+        "completed.day": "PubMed.DayCompleted",
+        "revised.year": "PubMed.YearRevised",
+        "revised.month": "PubMed.MonthRevised",
+        "revised.day": "PubMed.DayRevised",
+    }
+    for source, target in alias_columns.items():
+        if source in result.columns and target not in result.columns:
+            result[target] = result[source]
+
     if {"PubMed.YearCompleted", "PubMed.MonthCompleted", "PubMed.DayCompleted"}.issubset(result.columns) or {
         "PubMed.YearRevised",
         "PubMed.MonthRevised",
@@ -983,6 +1004,13 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         lambda row: _compute_review(row, base_weight, threshold), axis=1
     )
     normalized["is_experimental"] = ~normalized["review"].astype(bool)
+
+    if REMOVED_OUTPUT_COLUMNS:
+        drop_list = [
+            column for column in REMOVED_OUTPUT_COLUMNS if column in normalized.columns
+        ]
+        if drop_list:
+            normalized = normalized.drop(columns=drop_list)
 
     if "K_min_significant" in normalized.columns:
         normalized = normalized.drop(columns=["K_min_significant"])

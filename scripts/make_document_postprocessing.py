@@ -4,7 +4,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable
 
 import pandas as pd
 
@@ -27,6 +27,22 @@ def _resolve_key(files_cfg: Dict[str, str], *candidates: str) -> str:
 LOGGER = logging.getLogger(__name__)
 
 
+EXCLUDED_COLUMNS: tuple[str, ...] = (
+    "document_contains_external_links",
+    "is_experimental_doc",
+    "citations",
+    "n_responces",
+    "significant_citations_fraction",
+)
+
+
+def _drop_columns(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+    present = [column for column in columns if column in frame.columns]
+    if not present:
+        return frame
+    return frame.drop(columns=present)
+
+
 def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     from library.loaders import read_csv
 
@@ -36,6 +52,7 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
         raise TypeError("config['files'] must be a mapping")
 
     document_df = read_csv("document_csv", config)
+    document_df = _drop_columns(document_df, EXCLUDED_COLUMNS)
 
     document_ref_key = _resolve_key(files_cfg, "document_reference_csv", "document_csv")
     document_out_key = _resolve_key(
@@ -50,11 +67,13 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
         document_ref_df = document_df
     else:
         document_ref_df = read_csv(document_ref_key, config)
+        document_ref_df = _drop_columns(document_ref_df, EXCLUDED_COLUMNS)
 
     if document_out_key == document_ref_key:
         document_out_df = document_ref_df
     else:
         document_out_df = read_csv(document_out_key, config)
+        document_out_df = _drop_columns(document_out_df, EXCLUDED_COLUMNS)
 
 
     activity_df = read_csv(activity_ref_key, config)
