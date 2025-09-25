@@ -4,6 +4,9 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Dict
+
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -12,9 +15,74 @@ if str(PROJECT_ROOT) not in sys.path:
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
+def _resolve_key(files_cfg: Dict[str, str], *candidates: str) -> str:
+    for key in candidates:
+        if key in files_cfg:
+            return key
+    if candidates:
+        return candidates[-1]
+    raise ValueError("No candidates provided for key resolution")
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
+    from library.loaders import LoaderError, read_csv
+
+    files_cfg = config.get("files", {})
+    if not isinstance(files_cfg, dict):  # pragma: no cover - defensive
+        raise TypeError("config['files'] must be a mapping")
+
+    document_df = read_csv("document_csv", config)
+
+    document_ref_key = _resolve_key(files_cfg, "document_reference_csv", "document_csv")
+    document_out_key = _resolve_key(
+        files_cfg, "document_out_csv", document_ref_key, "document_csv"
+    )
+    activity_ref_key = _resolve_key(files_cfg, "activity_reference_csv", "activity_csv")
+    citation_key = _resolve_key(
+        files_cfg, "citation_reference_csv", "citation_fraction_csv", "citation_csv"
+    )
+
+    if document_ref_key == "document_csv":
+        document_ref_df = document_df
+    else:
+        document_ref_df = read_csv(document_ref_key, config)
+
+    if document_out_key == document_ref_key:
+        document_out_df = document_ref_df
+    else:
+        try:
+            document_out_df = read_csv(document_out_key, config)
+        except LoaderError as error:
+            if "File not found" not in str(error):
+                raise
+            LOGGER.warning(
+                "Document output CSV missing; falling back to reference dataset",
+                extra={
+                    "requested_key": document_out_key,
+                    "fallback_key": document_ref_key,
+                },
+            )
+            document_out_df = document_ref_df
+
+    activity_df = read_csv(activity_ref_key, config)
+
+    citation_df = read_csv(citation_key, config)
+
+    return {
+        "document": document_df,
+        "document_out": document_out_df,
+        "document_reference": document_ref_df,
+        "activity": activity_df,
+        "citation_fraction": citation_df,
+    }
+
+
 def main() -> None:
     from library.config import load_config
-    from library.loaders import read_csv, write_csv
+    from library.loaders import write_csv
     from library.postprocess_document import run as run_document
 
     parser = argparse.ArgumentParser(description="Document post-processing pipeline")
@@ -25,46 +93,9 @@ def main() -> None:
     config_path = Path(args.config)
     config = load_config(config_path)
 
-    document_df = read_csv("document_csv", config)
+    data_frames = get_document_data(config)
 
-    files_cfg = config.get("files", {})
-   
-   
-
-    document_ref_key = (
-        "document_reference_csv"
-        if "document_reference_csv" in files_cfg
-        else "document_csv"
-    )
-    activity_ref_key = (
-        "activity_reference_csv"
-        if "activity_reference_csv" in files_cfg
-        else "activity_csv"
-    )
-    activity_ref_key = (
-        "activity_reference_csv"
-        if "activity_reference_csv" in files_cfg
-        else "activity_csv"
-    )
-    citation_ref_key = (
-        "citation_reference_csv"
-        if "citation_reference_csv" in files_cfg
-        else "citation_csv"
-    )
-    document_ref_df = read_csv(document_ref_key, config)
-    activity_ref_df = read_csv(activity_ref_key, config)
-    citation_ref_df = read_csv(citation_ref_key, config)
-    document_out_df =  document_ref_df 
-    result = run_document(
-        {
-            "document": document_df,
-            "document_out": document_out_df,
-            "document_reference": document_ref_df,
-            "activity":  activity_ref_df,
-            "citation_fraction": citation_ref_key,
-        },
-        config,
-    )
+    result = run_document(data_frames, config)
 
     outputs_cfg = config.get("outputs", {})
     default_path = (
