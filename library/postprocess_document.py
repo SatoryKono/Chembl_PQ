@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -9,6 +9,121 @@ from .transforms import clean_pipe, to_text
 from .utils import coerce_types, ensure_columns
 
 logger = logging.getLogger(__name__)
+
+
+# ===== Parameters =====
+DOI_PREFIXES: tuple[str, ...] = (
+    "doi:",
+    "https://doi.org/",
+    "http://doi.org/",
+    "https://dx.doi.org/",
+    "http://dx.doi.org/",
+)
+
+DOCUMENT_OUT_RENAME_MAP: dict[str, str] = {
+    "PubMed.DOI": "PubMed.doi",
+    "PubMed.ArticleTitle": "title",
+    "PubMed.Abstract": "abstract",
+    "PubMed.PublicationType": "publication_type",
+    "PubMed.MeSH_Descriptors": "MeSH.descriptors",
+    "PubMed.JournalISOAbbrev": "journal",
+    "PubMed.Volume": "volume",
+    "PubMed.Issue": "issue",
+    "ChEMBL.authors": "authors",
+    "ChEMBL.document_chembl_id": "ChEMBL.document_chembl_id",
+    "ChEMBL.title": "ChEMBL.title",
+    "ChEMBL.abstract": "ChEMBL.abstract",
+    "ChEMBL.doi": "ChEMBL.doi",
+    "ChEMBL.page": "ChEMBL.page",
+    "ChEMBL.volume": "ChEMBL.volume",
+    "ChEMBL.issue": "ChEMBL.issue",
+    "scholar.DOI": "scholar.doi",
+}
+
+DOCUMENT_OUT_PAGE_COLUMNS: tuple[str, str] = (
+    "PubMed.StartPage",
+    "PubMed.EndPage",
+)
+
+DOCUMENT_OUT_DOI_COLUMNS: tuple[str, ...] = (
+    "PubMed.doi",
+    "scholar.doi",
+    "crossref.doi",
+    "OpenAlex.doi",
+    "ChEMBL.doi",
+)
+
+DOCUMENT_OUT_TEXT_COLUMNS: tuple[str, ...] = DOCUMENT_OUT_DOI_COLUMNS + ("authors",)
+
+REFERENCE_OPTIONAL_COLUMNS: tuple[str, ...] = (
+    "classification",
+    "document_contains_external_links",
+    "is_experimental_doc",
+)
+
+REFERENCE_BOOLEAN_COLUMNS: tuple[str, ...] = (
+    "document_contains_external_links",
+    "is_experimental_doc",
+)
+
+VALIDATION_VERBOSE_COLUMNS: tuple[str, ...] = (
+    "doi_same_count",
+    "invalid_doi",
+    "reason",
+    "consensus_doi",
+    "consensus_support",
+    "pm_doi_norm",
+    "pm_valid",
+    "chembl_doi_norm",
+    "chembl_valid",
+    "scholar_doi_norm",
+    "scholar_valid",
+    "crossref_doi_norm",
+    "crossref_valid",
+    "openalex_doi_norm",
+    "openalex_valid",
+    "pm_doi_raw",
+    "chembl_doi_raw",
+    "scholar_doi_raw",
+    "crossref_doi_raw",
+    "openalex_doi_raw",
+    "peers_valid_distinct",
+)
+
+REVIEW_SCORE_COLUMNS: tuple[str, ...] = (
+    "PubMed.publication_type",
+    "scholar.PublicationTypes",
+    "OpenAlex.publication_type",
+    "OpenAlex.crossref_type",
+)
+
+
+# ===== Helpers =====
+def _rename_columns_if_present(
+    df: pd.DataFrame, rename_map: Mapping[str, str]
+) -> pd.DataFrame:
+    existing = {source: target for source, target in rename_map.items() if source in df.columns}
+    if not existing:
+        return df
+    return df.rename(columns=existing)
+
+
+def _apply_column_transform(
+    df: pd.DataFrame,
+    columns: Sequence[str],
+    transform: Callable[[Any], Any],
+) -> pd.DataFrame:
+    for column in columns:
+        if column in df.columns:
+            df[column] = df[column].apply(transform)
+    return df
+
+
+def _drop_columns_if_present(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
+    existing = [column for column in columns if column in df.columns]
+    if not existing:
+        return df
+    return df.drop(columns=existing)
 
 
 PMID_SOURCES: tuple[str, ...] = (
@@ -37,13 +152,7 @@ def _normalize_doi(value: Any) -> Optional[str]:
     if not text:
         return None
     lowered = text.lower()
-    for prefix in (
-        "doi:",
-        "https://doi.org/",
-        "http://doi.org/",
-        "https://dx.doi.org/",
-        "http://dx.doi.org/",
-    ):
+    for prefix in DOI_PREFIXES:
         if lowered.startswith(prefix):
             lowered = lowered[len(prefix) :]
             break
@@ -59,30 +168,11 @@ def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
 
     prepared = document_out.copy()
 
-    rename_map = {
-        "PubMed.DOI": "PubMed.doi",
-        "PubMed.ArticleTitle": "title",
-        "PubMed.Abstract": "abstract",
-        "PubMed.PublicationType": "publication_type",
-        "PubMed.MeSH_Descriptors": "MeSH.descriptors",
-        "PubMed.JournalISOAbbrev": "journal",
-        "PubMed.Volume": "volume",
-        "PubMed.Issue": "issue",
-        "ChEMBL.authors": "authors",
-        "ChEMBL.document_chembl_id": "ChEMBL.document_chembl_id",
-        "ChEMBL.title": "ChEMBL.title",
-        "ChEMBL.abstract": "ChEMBL.abstract",
-        "ChEMBL.doi": "ChEMBL.doi",
-        "ChEMBL.page": "ChEMBL.page",
-        "ChEMBL.volume": "ChEMBL.volume",
-        "ChEMBL.issue": "ChEMBL.issue",
-        "scholar.DOI": "scholar.doi",
-    }
-    prepared = prepared.rename(columns=rename_map)
+    prepared = _rename_columns_if_present(prepared, DOCUMENT_OUT_RENAME_MAP)
 
-    if "PubMed.StartPage" in prepared.columns or "PubMed.EndPage" in prepared.columns:
-        start = prepared.get("PubMed.StartPage", pd.Series(index=prepared.index))
-        end = prepared.get("PubMed.EndPage", pd.Series(index=prepared.index))
+    if any(column in prepared.columns for column in DOCUMENT_OUT_PAGE_COLUMNS):
+        start = prepared.get(DOCUMENT_OUT_PAGE_COLUMNS[0], pd.Series(index=prepared.index))
+        end = prepared.get(DOCUMENT_OUT_PAGE_COLUMNS[1], pd.Series(index=prepared.index))
         start_text = (
             start.apply(to_text) if not start.empty else pd.Series("", index=prepared.index)
         )
@@ -104,12 +194,7 @@ def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
             for s, e in zip(start_text.tolist(), end_text.tolist())
         ]
 
-    for column in ("PubMed.doi", "scholar.doi", "crossref.doi", "OpenAlex.doi", "ChEMBL.doi"):
-        if column in prepared.columns:
-            prepared[column] = prepared[column].apply(to_text)
-
-    if "authors" in prepared.columns:
-        prepared["authors"] = prepared["authors"].apply(to_text)
+    prepared = _apply_column_transform(prepared, DOCUMENT_OUT_TEXT_COLUMNS, to_text)
 
     pmid_values: list[Optional[str]] = []
     for _, row in prepared.iterrows():
@@ -378,32 +463,7 @@ def _build_validation_frame(validated: pd.DataFrame) -> pd.DataFrame:
 
     result["sort_order"] = result.apply(_build_sort_order, axis=1)
 
-    verbose_columns = [
-        "doi_same_count",
-        "invalid_doi",
-        "reason",
-        "consensus_doi",
-        "consensus_support",
-        "pm_doi_norm",
-        "pm_valid",
-        "chembl_doi_norm",
-        "chembl_valid",
-        "scholar_doi_norm",
-        "scholar_valid",
-        "crossref_doi_norm",
-        "crossref_valid",
-        "openalex_doi_norm",
-        "openalex_valid",
-        "pm_doi_raw",
-        "chembl_doi_raw",
-        "scholar_doi_raw",
-        "crossref_doi_raw",
-        "openalex_doi_raw",
-        "peers_valid_distinct",
-    ]
-    existing_verbose = [col for col in verbose_columns if col in result.columns]
-    if existing_verbose:
-        result = result.drop(columns=existing_verbose)
+    result = _drop_columns_if_present(result, VALIDATION_VERBOSE_COLUMNS)
 
     ordered_columns = sorted(result.columns)
     result = result.loc[:, ordered_columns]
@@ -584,12 +644,7 @@ def _merge_document_reference(
     prepared_reference = prepared_reference.dropna(subset=["pubmed_id"])
 
     required_columns = ["pubmed_id"]
-    optional_columns = [
-        "classification",
-        "document_contains_external_links",
-        "is_experimental_doc",
-    ]
-    for column in optional_columns:
+    for column in REFERENCE_OPTIONAL_COLUMNS:
         if column in prepared_reference.columns:
             required_columns.append(column)
     prepared_reference = prepared_reference.loc[:, required_columns]
@@ -621,7 +676,7 @@ def _merge_document_reference(
     elif "review" in merged.columns:
         merged["review"] = base_review
 
-    for column in ("document_contains_external_links", "is_experimental_doc"):
+    for column in REFERENCE_BOOLEAN_COLUMNS:
         ref_column = f"{column}_ref"
         if ref_column in merged.columns:
             ref_numeric = pd.to_numeric(
@@ -676,10 +731,10 @@ def _resolve_document_id_column(document_df: pd.DataFrame) -> Optional[str]:
             return candidate
     return None
 def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
-    pub_type = to_text(row.get("PubMed.publication_type", ""))
-    scholar_type = to_text(row.get("scholar.PublicationTypes", ""))
-    openalex_type = to_text(row.get("OpenAlex.publication_type", ""))
-    openalex_cross = to_text(row.get("OpenAlex.crossref_type", ""))
+    pub_type = to_text(row.get(REVIEW_SCORE_COLUMNS[0], ""))
+    scholar_type = to_text(row.get(REVIEW_SCORE_COLUMNS[1], ""))
+    openalex_type = to_text(row.get(REVIEW_SCORE_COLUMNS[2], ""))
+    openalex_cross = to_text(row.get(REVIEW_SCORE_COLUMNS[3], ""))
     base_review = bool(row.get("review", False))
     n_responses = row.get("n_responces", 1)
 
@@ -703,20 +758,8 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "document_out" in inputs:
         merged_sources = _merge_sources(inputs["document_out"])
         validated = _build_validation_frame(_validate_rows(merged_sources))
-        rename_map = {
-            "_title": "title",
-            "abstract_": "abstract",
-            "MeSH.descriptors": "PubMed.MeSH",
-            "OpenAlex.MeSH.descriptors": "OpenAlex.MeSH",
-            "PubMed.MeSH_Qualifiers": "MeSH.qualifiers",
-            "PubMed.ChemicalList": "chemical_list",
-            "publication_type": "PubMed.publication_type",
-        }
-        for source, target in rename_map.items():
-            if source in validated.columns:
-                validated = validated.rename(columns={source: target})
-        if "PMID_for_validation" in validated.columns:
-            validated = validated.drop(columns=["PMID_for_validation"])
+        validated = _rename_columns_if_present(validated, DOCUMENT_RENAME_MAP)
+        validated = _drop_columns_if_present(validated, ("PMID_for_validation",))
         document_df = validated
 
     if not document_reference_df.empty:
