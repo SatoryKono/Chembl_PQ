@@ -3,12 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pandas.testing as pdt
 
-from library.postprocess_document import run
-from library.utils import coerce_types
+from library.transforms.document import normalize_document
+from library.validators import coerce_types
 
 
 def test_document_postprocess(document_inputs, test_config) -> None:
-    result = run(document_inputs, test_config)
+    result = normalize_document(document_inputs, test_config)
 
     expected = pd.DataFrame(
         {
@@ -65,7 +65,7 @@ def test_document_postprocess_backfills_missing_columns(
         "citation_fraction": document_inputs["citation_fraction"],
     }
 
-    result = run(inputs, test_config)
+    result = normalize_document(inputs, test_config)
 
     column_order = test_config["pipeline"]["document"]["column_order"]
     assert list(result.columns) == column_order

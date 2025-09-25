@@ -9,15 +9,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from library.config import load_config
+from library.io import read_csv, write_csv
+from library.transforms.testitem import normalize_testitem
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
 def main() -> None:
-    from library.config import load_config
-    from library.loaders import read_csv, write_csv
-    from library.postprocess_target import run as run_target
-
-    parser = argparse.ArgumentParser(description="Target post-processing pipeline")
+    parser = argparse.ArgumentParser(description="Testitem post-processing pipeline")
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--out", help="Override output path")
     args = parser.parse_args()
@@ -25,18 +25,29 @@ def main() -> None:
     config_path = Path(args.config)
     config = load_config(config_path)
 
-    target_df = read_csv("target_csv", config)
+    testitem_df = read_csv("testitem_csv", config)
+    testitem_reference_df = read_csv("testitem_reference_csv", config)
+    activity_df = read_csv("activity_csv", config)
 
-    result = run_target({"target": target_df}, config)
+    result = normalize_testitem(
+        {
+            "testitem": testitem_df,
+            "testitem_reference": testitem_reference_df,
+            "activity": activity_df,
+        },
+        config,
+    )
 
     outputs_cfg = config.get("outputs", {})
     default_path = (
-        Path(outputs_cfg.get("dir", "data/output")) / "target_postprocessed.csv"
+        Path(outputs_cfg.get("dir", "data/output")) / "testitem_postprocessed.csv"
     )
     output_path = Path(args.out) if args.out else default_path
 
     write_csv(result, output_path, config)
-    logging.info("Target post-processing completed", extra={"output": str(output_path)})
+    logging.info(
+        "Testitem post-processing completed", extra={"output": str(output_path)}
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

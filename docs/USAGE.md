@@ -17,10 +17,11 @@ Each output has an individual CLI located in ``scripts/``. Provide the path to
 ``config.yaml`` and optionally override the destination file with ``--out``.
 
 ```bash
-python scripts/make_document_postprocessing.py --config config.yaml
-python scripts/make_testitem_postprocessing.py --config config.yaml
-python scripts/make_assay_postprocessing.py --config config.yaml
-python scripts/make_target_postprocessing.py --config config.yaml
+python scripts/get_document_data.py --config config.yaml
+python scripts/get_testitem_data.py --config config.yaml
+python scripts/get_assay_data.py --config config.yaml
+python scripts/get_target_data.py --config config.yaml
+python scripts/get_activity_data.py --config config.yaml
 ```
 
 By default, results are written to ``outputs.dir`` specified in the config. Use

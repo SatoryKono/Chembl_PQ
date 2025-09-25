@@ -6,8 +6,8 @@ from typing import Any, Dict, Iterable, Optional
 
 import pandas as pd
 
-from .transforms import clean_pipe, to_text
-from .utils import coerce_types, ensure_columns
+from .common import clean_pipe, to_text
+from ..validators import coerce_types, ensure_columns
 
 logger = logging.getLogger(__name__)
 
@@ -908,7 +908,7 @@ def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
     return bool(base_review or normalized_score > threshold)
 
 
-def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
+def normalize_document(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     document_df = inputs.get("document", pd.DataFrame()).copy()
     document_reference_df = inputs.get("document_reference", pd.DataFrame()).copy()
     if "document_out" in inputs:
@@ -1056,4 +1056,4 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     return typed
 
 
-__all__ = ["run"]
+__all__ = ["normalize_document"]

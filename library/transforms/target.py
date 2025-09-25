@@ -7,8 +7,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from .transforms import clean_pipe
-from .utils import coerce_types, deduplicate, ensure_columns
+from .common import clean_pipe
+from ..validators import coerce_types, deduplicate, ensure_columns
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ IUPHAR_PAIR_OVERRIDES: dict[
 }
 
 
-def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
+def normalize_target(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     target_df = inputs["target"].copy()
 
     logger.info("Starting target post-processing", extra={"rows": len(target_df)})
@@ -899,4 +899,4 @@ def _flatten_iterable(values: Iterable[Any]) -> List[str]:
     return tokens
 
 
-__all__ = ["run"]
+__all__ = ["normalize_target"]

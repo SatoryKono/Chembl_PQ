@@ -3,12 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pandas.testing as pdt
 
-from library.postprocess_target import run
-from library.utils import coerce_types
+from library.transforms.target import normalize_target
+from library.validators import coerce_types
 
 
 def test_target_postprocess(target_inputs, test_config) -> None:
-    result = run(target_inputs, test_config)
+    result = normalize_target(target_inputs, test_config)
 
     expected = pd.DataFrame(
         {
@@ -92,7 +92,7 @@ def test_target_postprocess_missing_columns(test_config) -> None:
 
     inputs = {"target": minimal}
 
-    result = run(inputs, test_config)
+    result = normalize_target(inputs, test_config)
 
     output_columns = test_config["pipeline"]["target"]["output_columns"]
     expected = pd.DataFrame([{column: pd.NA for column in output_columns}])
@@ -125,7 +125,7 @@ def test_target_protein_classification_fallback(test_config) -> None:
 
     inputs = {"target": minimal}
 
-    result = run(inputs, test_config)
+    result = normalize_target(inputs, test_config)
 
     expected = pd.DataFrame(
         {

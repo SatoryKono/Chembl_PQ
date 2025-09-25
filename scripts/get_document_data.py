@@ -12,6 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from library.config import load_config
+from library.io import read_csv, write_csv
+from library.transforms.document import normalize_document
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
@@ -44,9 +48,6 @@ def _drop_columns(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
 
 
 def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
-    from library.loaders import read_csv
-
-
     files_cfg = config.get("files", {})
     if not isinstance(files_cfg, dict):  # pragma: no cover - defensive
         raise TypeError("config['files'] must be a mapping")
@@ -92,10 +93,6 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
 
 
 def main() -> None:
-    from library.config import load_config
-    from library.loaders import write_csv
-    from library.postprocess_document import run as run_document
-
     parser = argparse.ArgumentParser(description="Document post-processing pipeline")
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--out", help="Override output path")
@@ -106,7 +103,7 @@ def main() -> None:
 
     data_frames = get_document_data(config)
 
-    result = run_document(data_frames, config)
+    result = normalize_document(data_frames, config)
 
     outputs_cfg = config.get("outputs", {})
     default_path = (
