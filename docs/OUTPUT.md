@@ -7,9 +7,8 @@ Columns, ordering and data types are enforced by ``pipeline.*.type_map`` and
 ## Document
 
 * Primary key: ``ChEMBL.document_chembl_id``
-* Column highlights: review voting (``review``/``is_experimental``), activity
-  aggregates (``n_activity``, ``n_assay``, ``n_testitem``) and citation flag
-  ``significant_citations_fraction``.
+* Column highlights: review voting (``review``/``is_experimental``) and activity
+  aggregates (``n_activity``, ``n_assay``, ``n_testitem``).
 * Types: nullable integers use ``Int64`` (pandas extension type) to avoid float
   placeholders.
 

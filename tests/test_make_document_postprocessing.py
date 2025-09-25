@@ -30,6 +30,16 @@ def test_get_document_data_loads_inputs() -> None:
         "p_value_at_threshold",
     ]
 
+    excluded = {
+        "document_contains_external_links",
+        "is_experimental_doc",
+        "citations",
+        "n_responces",
+        "significant_citations_fraction",
+    }
+    for key in ("document", "document_out", "document_reference"):
+        assert excluded.isdisjoint(data[key].columns)
+
 
 def test_get_document_data_uses_document_fallback() -> None:
     config = load_config(Path("tests/data/test_config.yaml"))
