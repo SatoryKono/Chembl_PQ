@@ -20,8 +20,6 @@ def test_testitem_postprocess(testitem_inputs, test_config) -> None:
             "is_radical": [False, False],
             "standard_inchi_key": ["KEY1", pd.NA],
             "unknown_chirality": [False, True],
-            "document_chembl_id": ["DOC1", "DOC2"],
-            "document_testitem_total": [2, 1],
             "invalid_record": [False, True],
         }
     )

@@ -105,6 +105,9 @@ let
       MinLength = 5,
       MaxLength = 300
     ],
+    InchiKey = [
+      SkeletonLength = 14
+    ],
     ColumnSets = [
       Document = [
         ReferenceNestedColumn = "DocumentReference",
@@ -166,6 +169,8 @@ let
   ColumnCatalog = Record.Field(Parameters, "ColumnCatalog"),
   ProteinClassificationColumnName = Record.Field(ColumnCatalog, "ProteinClassification"),
   TargetColumnDrops = List.RemoveNulls({ProteinClassificationColumnName}),
+  InchiKeyParams = Record.Field(Parameters, "InchiKey"),
+  SkeletonKeyLength = Record.Field(InchiKeyParams, "SkeletonLength"),
 
   // ===== Providers =====
   BuildAbsolutePath = (pathRel as text) as text => Parameters[BasePath] & pathRel,
@@ -575,6 +580,12 @@ let
           result = Text.Combine(ordered, textParams[PipeSeparator])
         in
           result,
+      textPrefix = (value as any, length as number) as nullable text =>
+        let
+          textValue = try Text.From(value) otherwise null,
+          normalized = if textValue = null then null else textValue
+        in
+          if normalized = null or normalized = "" then null else Text.Start(normalized, length),
       ensureColumn = (tbl as table, columnName as text, optional defaultValue as any, optional columnType as nullable type) as table =>
         let
           hasColumn = List.Contains(Table.ColumnNames(tbl), columnName),
@@ -915,7 +926,8 @@ let
         SplitPipeList = splitPipeList,
         ReplaceTextInColumn = replaceTextInColumn,
         ZipLists = zipLists,
-        CoalesceColumns = coalesceColumns
+        CoalesceColumns = coalesceColumns,
+        TextPrefix = textPrefix
       ],
   DocumentHelpers =
     let
@@ -1001,6 +1013,7 @@ let
   SplitPipeList = Helpers[SplitPipeList],
   ReplaceTextInColumn = Helpers[ReplaceTextInColumn],
   ZipLists = Helpers[ZipLists],
+  TextPrefix = Helpers[TextPrefix],
   SelectColumnsSafe = (tbl as table, columns as list) as table =>
     Table.SelectColumns(tbl, NormalizeColumnList(columns), MissingField.Ignore),
   FinalizeAggColumns = (tbl as table, aggColumns as list) as table =>
@@ -2389,8 +2402,14 @@ let
             {"document_testitem_total"}
           ),
           aggregatesFinal = FinalizeAggColumns(withAggregates, {"document_testitem_total"}),
-          withInvalidFlag = Table.AddColumn(
+          withSkeleton = Table.AddColumn(
             aggregatesFinal,
+            "skeleton_inchi_key",
+            each TextPrefix(Record.FieldOrDefault(_, "standard_inchi_key", null), SkeletonKeyLength),
+            type nullable text
+          ),
+          withInvalidFlag = Table.AddColumn(
+            withSkeleton,
             "invalid_record",
             each not (
               [molecule_type] = "Small molecule"
@@ -2408,6 +2427,7 @@ let
             "structure_type",
             "is_radical",
             "standard_inchi_key",
+            "skeleton_inchi_key",
             "unknown_chirality",
             "document_chembl_id",
             "document_testitem_total",
