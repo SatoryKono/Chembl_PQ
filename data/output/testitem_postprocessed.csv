@@ -1,21 +1,21 @@
 molecule_chembl_id,pref_name,all_names,molecule_type,structure_type,is_radical,standard_inchi_key,skeleton_inchi_key,unknown_chirality,invalid_record
-CHEMBL417915,,(-)-cymserine,Small molecule,MOL,,NKJRRVBTMYRXRB-YANBTOMASA-N,,True,False
-CHEMBL296435,(+)-ehna,(+)-ehna,Small molecule,MOL,,IOSAAWHGJUZBOG-WDEREUQCSA-N,,False,False
-CHEMBL27559,,(r)-oh-n-propylnoraporphine,Small molecule,MOL,,WZJSIHGOLMMBAL-MRXNPFEDSA-N,,False,False
-CHEMBL267447,calanolide a,(+)-calanolide a,Small molecule,MOL,,NIDRYBLTWYFCFV-FMTVUPSXSA-N,,False,False
-CHEMBL416715,(r)pk-11195,(r)pk-11195,Small molecule,MOL,,RAVIZVQZGXBOQO-CQSZACIVSA-N,,False,False
-CHEMBL54727,,(-)-phenserine,Small molecule,MOL,,PBHFNBQPZCRWQP-IJHRGXPZSA-N,,True,False
-CHEMBL51697,,(s)-nomifensine,Small molecule,MOL,,XXPANQJNYNUNES-AWEZNQCLSA-N,,False,False
-CHEMBL284994,,"(1r,4s)-trans-sertraline",Small molecule,MOL,,VGKDLMBJGBXTGI-YVEFUNNKSA-N,,False,False
-CHEMBL283509,,(+)-arisugacin a,Small molecule,MOL,,MIHBCQWIBJDVPX-JUDWXZBOSA-N,,False,False
-CHEMBL268229,,(r)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-RXMQYKEDSA-N,,False,False
-CHEMBL49623,"(r,s)-ifenprodil","(r,s)-ifenprodil",Small molecule,MOL,,UYNVMODNBIQBMV-KKSFZXQISA-N,,False,False
-CHEMBL11919,,(s)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-YFKPBYRVSA-N,,False,False
-CHEMBL300143,,(-)-tolserine,Small molecule,MOL,,JGAGHIIOCADQOV-QWAKEFERSA-N,,True,False
-CHEMBL13378,"(r,s)-ampa","(r,s)-ampa",Small molecule,MOL,,UUDAMDVQRQNNHZ-UHFFFAOYSA-N,,True,False
-CHEMBL276815,(s)-ampa,(s)-ampa,Small molecule,MOL,,UUDAMDVQRQNNHZ-YFKPBYRVSA-N,,False,False
-CHEMBL46005,,"(2s,2's)-2,2'-carbonylbis(azanediyl)dipentanedioic acid",Small molecule,MOL,,SOAPXKSPJAZNGO-WDSKDSINSA-N,,False,False
-CHEMBL298827,(s)-thiorphan,(s)-thiorphan,Small molecule,MOL,,LJJKNPQAGWVLDQ-SNVBAGLBSA-N,,False,False
-CHEMBL66,(+)-taxifolin,"(+)-taxifolin, cianidanol",Small molecule,MOL,,CXQWRCVTCMQVQX-LSDHHAIUSA-N,,False,False
-CHEMBL24077,(r)-skf-38393,"(r)-skf-38393, (r)-skf-38393",Small molecule,MOL,,JUDKOGFHZYMDMF-CQSZACIVSA-N,,False,False
-CHEMBL14346,"1,2,3,4-tetrahydroisoquinoline","1,2,3,4-tetrahydroisoquinoline, 1,2,3,4-tetrahydro-isoquinoline, 1,2,3,4-tetrahydroisoquinoline",Small molecule,MOL,,UWYZHKAOTLEWKK-UHFFFAOYSA-N,,False,False
+CHEMBL417915,,(-)-cymserine,Small molecule,MOL,,NKJRRVBTMYRXRB-YANBTOMASA-N,NKJRRVBTMYRXRB,True,False
+CHEMBL296435,(+)-ehna,(+)-ehna,Small molecule,MOL,,IOSAAWHGJUZBOG-WDEREUQCSA-N,IOSAAWHGJUZBOG,False,False
+CHEMBL27559,,(r)-oh-n-propylnoraporphine,Small molecule,MOL,,WZJSIHGOLMMBAL-MRXNPFEDSA-N,WZJSIHGOLMMBAL,False,False
+CHEMBL267447,calanolide a,(+)-calanolide a,Small molecule,MOL,,NIDRYBLTWYFCFV-FMTVUPSXSA-N,NIDRYBLTWYFCFV,False,False
+CHEMBL416715,(r)pk-11195,(r)pk-11195,Small molecule,MOL,,RAVIZVQZGXBOQO-CQSZACIVSA-N,RAVIZVQZGXBOQO,False,False
+CHEMBL54727,,(-)-phenserine,Small molecule,MOL,,PBHFNBQPZCRWQP-IJHRGXPZSA-N,PBHFNBQPZCRWQP,True,False
+CHEMBL51697,,(s)-nomifensine,Small molecule,MOL,,XXPANQJNYNUNES-AWEZNQCLSA-N,XXPANQJNYNUNES,False,False
+CHEMBL284994,,"(1r,4s)-trans-sertraline",Small molecule,MOL,,VGKDLMBJGBXTGI-YVEFUNNKSA-N,VGKDLMBJGBXTGI,False,False
+CHEMBL283509,,(+)-arisugacin a,Small molecule,MOL,,MIHBCQWIBJDVPX-JUDWXZBOSA-N,MIHBCQWIBJDVPX,False,False
+CHEMBL268229,,(r)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-RXMQYKEDSA-N,XNQIOISZPFVUFG,False,False
+CHEMBL49623,"(r,s)-ifenprodil","(r,s)-ifenprodil",Small molecule,MOL,,UYNVMODNBIQBMV-KKSFZXQISA-N,UYNVMODNBIQBMV,False,False
+CHEMBL11919,,(s)-alpha-methylhistamine,Small molecule,MOL,,XNQIOISZPFVUFG-YFKPBYRVSA-N,XNQIOISZPFVUFG,False,False
+CHEMBL300143,,(-)-tolserine,Small molecule,MOL,,JGAGHIIOCADQOV-QWAKEFERSA-N,JGAGHIIOCADQOV,True,False
+CHEMBL13378,"(r,s)-ampa","(r,s)-ampa",Small molecule,MOL,,UUDAMDVQRQNNHZ-UHFFFAOYSA-N,UUDAMDVQRQNNHZ,True,False
+CHEMBL276815,(s)-ampa,(s)-ampa,Small molecule,MOL,,UUDAMDVQRQNNHZ-YFKPBYRVSA-N,UUDAMDVQRQNNHZ,False,False
+CHEMBL46005,,"(2s,2's)-2,2'-carbonylbis(azanediyl)dipentanedioic acid",Small molecule,MOL,,SOAPXKSPJAZNGO-WDSKDSINSA-N,SOAPXKSPJAZNGO,False,False
+CHEMBL298827,(s)-thiorphan,(s)-thiorphan,Small molecule,MOL,,LJJKNPQAGWVLDQ-SNVBAGLBSA-N,LJJKNPQAGWVLDQ,False,False
+CHEMBL66,(+)-taxifolin,"(+)-taxifolin, cianidanol",Small molecule,MOL,,CXQWRCVTCMQVQX-LSDHHAIUSA-N,CXQWRCVTCMQVQX,False,False
+CHEMBL24077,(r)-skf-38393,"(r)-skf-38393, (r)-skf-38393",Small molecule,MOL,,JUDKOGFHZYMDMF-CQSZACIVSA-N,JUDKOGFHZYMDMF,False,False
+CHEMBL14346,"1,2,3,4-tetrahydroisoquinoline","1,2,3,4-tetrahydroisoquinoline, 1,2,3,4-tetrahydro-isoquinoline, 1,2,3,4-tetrahydroisoquinoline",Small molecule,MOL,,UWYZHKAOTLEWKK-UHFFFAOYSA-N,UWYZHKAOTLEWKK,False,False
