@@ -34,6 +34,49 @@ PMID_SOURCES: tuple[str, ...] = (
     "OpenAlex.PMID",
 )
 
+NOISE_COLUMNS: frozenset[str] = frozenset(
+    {
+        "PubMed.JournalTitle",
+        "PubMed.Error",
+        "scholar.SemanticScholarId",
+        "scholar.ExternalIds",
+        "scholar.Error",
+        "scholar.Venue",
+        "OpenAlex.Error",
+        "OpenAlex.Id",
+        "OpenAlex.Venue",
+        "crossref.Error",
+        "crossref.Title",
+        "crossref.Subtitle",
+        "crossref.Subject",
+        "publication_types_normalised",
+        "publication_review_score",
+        "publication_experimental_score",
+        "publication_class",
+        "ChEMBL.journal",
+        "ChEMBL.journal_abbrev",
+        "ChEMBL.first_page",
+        "ChEMBL.last_page",
+        "ChEMBL.source",
+    }
+)
+
+LOWER_CASE_COLUMNS: tuple[str, ...] = (
+    "title",
+    "abstract",
+    "journal",
+    "PubMed.doi",
+    "scholar.doi",
+    "crossref.doi",
+    "OpenAlex.doi",
+    "ChEMBL.doi",
+    "publication_type",
+    "scholar.PublicationTypes",
+    "OpenAlex.publication_type",
+    "OpenAlex.crossref_type",
+    "crossref.publication_type",
+)
+
 
 def _sanitize_digits(value: Any) -> str:
     text = to_text(value)
@@ -86,15 +129,16 @@ def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
         "PubMed.JournalISOAbbrev": "journal",
         "PubMed.Volume": "volume",
         "PubMed.Issue": "issue",
+        "PubMed.ISSN": "ISSN",
         "ChEMBL.authors": "authors",
-        "ChEMBL.document_chembl_id": "ChEMBL.document_chembl_id",
-        "ChEMBL.title": "ChEMBL.title",
-        "ChEMBL.abstract": "ChEMBL.abstract",
-        "ChEMBL.doi": "ChEMBL.doi",
-        "ChEMBL.page": "ChEMBL.page",
-        "ChEMBL.volume": "ChEMBL.volume",
-        "ChEMBL.issue": "ChEMBL.issue",
         "scholar.DOI": "scholar.doi",
+        "OpenAlex.DOI": "OpenAlex.doi",
+        "OpenAlex.PublicationTypes": "OpenAlex.publication_type",
+        "OpenAlex.TypeCrossref": "OpenAlex.crossref_type",
+        "OpenAlex.MeshDescriptors": "OpenAlex.MeSH.descriptors",
+        "OpenAlex.MeshQualifiers": "OpenAlex.MeSH.qualifiers",
+        "crossref.DOI": "crossref.doi",
+        "crossref.Type": "crossref.publication_type",
     }
     prepared = prepared.rename(columns=rename_map)
 
@@ -122,12 +166,22 @@ def _merge_sources(document_out: pd.DataFrame) -> pd.DataFrame:
             for s, e in zip(start_text.tolist(), end_text.tolist())
         ]
 
-    for column in ("PubMed.doi", "scholar.doi", "crossref.doi", "OpenAlex.doi", "ChEMBL.doi"):
-        if column in prepared.columns:
-            prepared[column] = prepared[column].apply(to_text)
+    noise_columns = NOISE_COLUMNS.intersection(prepared.columns)
+    if noise_columns:
+        prepared = prepared.drop(columns=sorted(noise_columns))
+
+    if "page" in prepared.columns:
+        prepared["page"] = prepared["page"].map(lambda value: to_text(value))
+        prepared["page"] = (
+            prepared["page"].str.replace("–", "-", regex=False).str.replace("—", "-", regex=False)
+        )
 
     if "authors" in prepared.columns:
         prepared["authors"] = prepared["authors"].apply(to_text)
+
+    for column in LOWER_CASE_COLUMNS:
+        if column in prepared.columns:
+            prepared[column] = prepared[column].map(lambda value: to_text(value).lower())
 
     pmid_values: list[Optional[str]] = []
     for _, row in prepared.iterrows():
