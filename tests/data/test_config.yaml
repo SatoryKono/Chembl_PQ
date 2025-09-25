@@ -171,8 +171,6 @@ pipeline:
       is_radical: bool
       standard_inchi_key: string
       unknown_chirality: bool
-      document_chembl_id: string
-      document_testitem_total: Int64
       invalid_record: bool
     column_order:
       - molecule_chembl_id
@@ -183,8 +181,6 @@ pipeline:
       - is_radical
       - standard_inchi_key
       - unknown_chirality
-      - document_chembl_id
-      - document_testitem_total
       - invalid_record
   assay:
     drop_columns:
