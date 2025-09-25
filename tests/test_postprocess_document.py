@@ -65,6 +65,7 @@ def test_document_postprocess_backfills_missing_columns(
     inputs = {
         "document": minimal_document,
         "document_out": minimal_document_out,
+        "document_reference": document_inputs["document_reference"],
         "activity": document_inputs["activity"],
         "citation_fraction": document_inputs["citation_fraction"],
     }

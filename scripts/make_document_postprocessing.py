@@ -26,18 +26,23 @@ def main() -> None:
     config = load_config(config_path)
 
     document_df = read_csv("document_csv", config)
-    document_out_df = read_csv("document_csv_out", config)
-    document_ref_df = read_csv("document_csv", config)
+
+    files_cfg = config.get("files", {})
+    document_out_key = "document_csv_out" if "document_csv_out" in files_cfg else "document_out_csv"
+    document_out_df = read_csv(document_out_key, config)
+
+    document_ref_key = (
+        "document_reference_csv"
+        if "document_reference_csv" in files_cfg
+        else "document_csv"
+    )
+    document_ref_df = read_csv(document_ref_key, config)
     activity_df = read_csv("activity_csv", config)
     citation_df = read_csv("citation_fraction_csv", config)
 
     result = run_document(
         {
             "document": document_df,
-            "activity": activity_df,
-            "citation_fraction": citation_df,
-        },
-        {
             "document_out": document_out_df,
             "document_reference": document_ref_df,
             "activity": activity_df,

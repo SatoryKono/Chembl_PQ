@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, Optional
 import pandas as pd
 
 from .transforms import clean_pipe, to_text
-from .utils import coerce_types, ensure_columns, finalize_aggregate_columns
+from .utils import coerce_types, ensure_columns
 
 logger = logging.getLogger(__name__)
 
@@ -494,39 +494,151 @@ def _aggregate_activity(
     activity = coerce_types(activity, ACTIVITY_SCHEMA)
     activity = activity[activity["document_chembl_id"].notna()]
 
-    grouped = (
-        activity.groupby("document_chembl_id", dropna=False)
-        .agg(
-            n_activity=("activity_chembl_id", "count"),
-            citations=("is_citation", lambda x: x.fillna(False).astype(bool).sum()),
-            n_assay=("assay_chembl_id", lambda x: x.dropna().nunique()),
-            n_testitem=("molecule_chembl_id", lambda x: x.dropna().nunique()),
-        )
-        .reset_index()
+    base_counts = (
+        activity.groupby("document_chembl_id", dropna=False)["activity_chembl_id"]
+        .count()
+        .astype("Int64")
     )
+
+    citation_counts = (
+        activity.assign(
+            _is_citation_flag=activity["is_citation"].fillna(False).astype(bool)
+        )
+        .groupby("document_chembl_id", dropna=False)["_is_citation_flag"]
+        .sum()
+        .astype("Int64")
+    )
+
+    assay_counts = (
+        activity.loc[activity["assay_chembl_id"].notna()]
+        .groupby("document_chembl_id", dropna=False)["assay_chembl_id"]
+        .nunique()
+        .astype("Int64")
+    )
+
+    testitem_counts = (
+        activity.loc[activity["molecule_chembl_id"].notna()]
+        .groupby("document_chembl_id", dropna=False)["molecule_chembl_id"]
+        .nunique()
+        .astype("Int64")
+    )
+
+    aggregated = base_counts.to_frame(name="n_activity")
+    aggregated = aggregated.join(citation_counts.rename("citations"), how="left")
+    aggregated = aggregated.join(assay_counts.rename("n_assay"), how="left")
+    aggregated = aggregated.join(testitem_counts.rename("n_testitem"), how="left")
+    aggregated = aggregated.rename_axis("document_chembl_id").reset_index()
 
     thresholds_typed = coerce_types(
         thresholds, {"N": "Int64", "K_min_significant": "Int64"}
     )
-    aggregated = grouped.merge(
+    aggregated = aggregated.merge(
         thresholds_typed.rename(columns={"N": "n_activity"}),
         on="n_activity",
         how="left",
     )
-    aggregated["K_min_significant"] = (
-        aggregated["K_min_significant"].fillna(0).astype("Int64")
+
+    for column in ("n_activity", "citations", "n_assay", "n_testitem"):
+        if column in aggregated.columns:
+            aggregated[column] = pd.to_numeric(
+                aggregated[column], errors="coerce"
+            ).astype("Int64")
+
+    if "K_min_significant" in aggregated.columns:
+        aggregated["K_min_significant"] = pd.to_numeric(
+            aggregated["K_min_significant"], errors="coerce"
+        ).astype("Int64")
+
+    aggregated["significant_citations_fraction"] = pd.Series(
+        pd.NA, index=aggregated.index, dtype="boolean"
     )
-    aggregated["significant_citations_fraction"] = aggregated["citations"].fillna(
-        0
-    ).astype("Int64") > aggregated["K_min_significant"].fillna(0).astype("Int64")
-    aggregated = finalize_aggregate_columns(
-        aggregated,
-        ["n_activity", "citations", "n_assay", "n_testitem"],
-    )
+    mask = aggregated["citations"].notna() & aggregated["K_min_significant"].notna()
+    if mask.any():
+        aggregated.loc[mask, "significant_citations_fraction"] = (
+            aggregated.loc[mask, "citations"]
+            > aggregated.loc[mask, "K_min_significant"]
+        )
     aggregated["significant_citations_fraction"] = aggregated[
         "significant_citations_fraction"
     ].astype("boolean")
     return aggregated
+
+
+def _merge_document_reference(
+    document: pd.DataFrame, reference: pd.DataFrame
+) -> pd.DataFrame:
+    if document.empty or reference.empty:
+        return document.copy()
+
+    if "PMID" not in document.columns:
+        return document.copy()
+
+    prepared_reference = reference.copy()
+    if "pubmed_id" not in prepared_reference.columns:
+        return document.copy()
+
+    prepared_reference["pubmed_id"] = prepared_reference["pubmed_id"].map(
+        _sanitize_digits
+    )
+    prepared_reference = prepared_reference.replace({"pubmed_id": {"": pd.NA}})
+    prepared_reference = prepared_reference.dropna(subset=["pubmed_id"])
+
+    required_columns = ["pubmed_id"]
+    optional_columns = [
+        "classification",
+        "document_contains_external_links",
+        "is_experimental_doc",
+    ]
+    for column in optional_columns:
+        if column in prepared_reference.columns:
+            required_columns.append(column)
+    prepared_reference = prepared_reference.loc[:, required_columns]
+
+    document_prepared = document.copy()
+    document_prepared["_pmid_key"] = document_prepared["PMID"].map(_sanitize_digits)
+    merged = document_prepared.merge(
+        prepared_reference,
+        how="left",
+        left_on="_pmid_key",
+        right_on="pubmed_id",
+        suffixes=("", "_ref"),
+    )
+    merged = merged.drop(columns=["_pmid_key", "pubmed_id"], errors="ignore")
+
+    base_review = (
+        merged["review"].astype("boolean")
+        if "review" in merged.columns
+        else pd.Series(pd.NA, index=merged.index, dtype="boolean")
+    )
+
+    if "classification" in merged.columns:
+        classification_numeric = pd.to_numeric(
+            merged["classification"], errors="coerce"
+        ).astype("Int64")
+        derived_review = classification_numeric.astype("boolean")
+        merged["review"] = derived_review.combine_first(base_review)
+        merged = merged.drop(columns=["classification"], errors="ignore")
+    elif "review" in merged.columns:
+        merged["review"] = base_review
+
+    for column in ("document_contains_external_links", "is_experimental_doc"):
+        ref_column = f"{column}_ref"
+        if ref_column in merged.columns:
+            ref_numeric = pd.to_numeric(
+                merged[ref_column], errors="coerce"
+            ).astype("Int64")
+            ref_boolean = ref_numeric.astype("boolean")
+            if column in merged.columns:
+                base_boolean = merged[column].astype("boolean")
+                merged[column] = ref_boolean.combine_first(base_boolean)
+            else:
+                merged[column] = ref_boolean
+            merged = merged.drop(columns=[ref_column], errors="ignore")
+
+    if "review" in merged.columns:
+        merged["review"] = merged["review"].astype("boolean")
+
+    return merged
 
 
 def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -574,6 +686,7 @@ def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
 
 def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     document_df = inputs.get("document", pd.DataFrame()).copy()
+    document_reference_df = inputs.get("document_reference", pd.DataFrame()).copy()
     if "document_out" in inputs:
         merged_sources = _merge_sources(inputs["document_out"])
         validated = _build_validation_frame(_validate_rows(merged_sources))
@@ -592,6 +705,9 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         if "PMID_for_validation" in validated.columns:
             validated = validated.drop(columns=["PMID_for_validation"])
         document_df = validated
+
+    if not document_reference_df.empty:
+        document_df = _merge_document_reference(document_df, document_reference_df)
     activity_df = inputs.get("activity", pd.DataFrame())
     thresholds_df = inputs.get("citation_fraction", pd.DataFrame())
 
@@ -611,16 +727,16 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     )
     merged = merged.drop(columns=["document_chembl_id"], errors="ignore")
 
-    merged = merged.fillna(
-        {
-            "n_activity": 0,
-            "citations": 0,
-            "n_assay": 0,
-            "n_testitem": 0,
-            "K_min_significant": 0,
-            "significant_citations_fraction": False,
-        }
-    )
+    for column in ("n_activity", "citations", "n_assay", "n_testitem"):
+        if column in merged.columns:
+            merged[column] = pd.to_numeric(merged[column], errors="coerce").astype(
+                "Int64"
+            )
+
+    if "significant_citations_fraction" in merged.columns:
+        merged["significant_citations_fraction"] = merged[
+            "significant_citations_fraction"
+        ].astype("boolean")
 
     normalized = _apply_classification_rules(merged, config)
 
