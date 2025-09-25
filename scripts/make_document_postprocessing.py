@@ -47,8 +47,8 @@ def main() -> None:
         else "activity_csv"
     )
     citation_ref_key = (
-        "citation_fraction_csv"
-        if "citation_fraction_csv" in files_cfg
+        "citation_reference_csv"
+        if "citation_reference_csv" in files_cfg
         else "citation_csv"
     )
     document_ref_df = read_csv(document_ref_key, config)
