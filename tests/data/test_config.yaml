@@ -161,6 +161,7 @@ pipeline:
       molecule_type: "Small molecule"
       structure_type: "MOL"
     chirality_reference: 1
+    skeleton_length: 14
     type_map:
       molecule_chembl_id: string
       pref_name: string
@@ -170,6 +171,7 @@ pipeline:
       is_radical: bool
       standard_inchi_key: string
       canonical_smiles: string
+      skeleton_inchi_key: string
       unknown_chirality: bool
       invalid_record: bool
     column_order:
@@ -181,6 +183,7 @@ pipeline:
       - is_radical
       - standard_inchi_key
       - canonical_smiles
+      - skeleton_inchi_key
       - unknown_chirality
       - invalid_record
   assay:
