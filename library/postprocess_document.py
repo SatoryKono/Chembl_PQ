@@ -142,19 +142,6 @@ def _apply_classification_rules(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             sort=bool(sort_pipes),
         )
     return result
-
-
-def _compute_responses(
-    row: pd.Series, response_columns: list[str], base_weight: int
-) -> int:
-    non_empty = 0
-    for column in response_columns:
-        value = to_text(row.get(column, ""))
-        if value:
-            non_empty += 1
-    return base_weight + non_empty
-
-
 def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
     pub_type = to_text(row.get("PubMed.publication_type", ""))
     scholar_type = to_text(row.get("scholar.PublicationTypes", ""))
@@ -220,9 +207,17 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "review" not in normalized.columns:
         normalized["review"] = False
     normalized["review"] = normalized["review"].fillna(False).astype("boolean")
-    normalized["n_responces"] = normalized.apply(
-        lambda row: _compute_responses(row, response_columns, base_weight), axis=1
-    )
+    if response_columns:
+        response_frame = normalized.reindex(columns=response_columns, fill_value="")
+        response_count = response_frame.apply(lambda column: column.map(to_text)).ne("").sum(
+            axis=1
+        )
+    else:
+        response_count = pd.Series(0, index=normalized.index)
+
+    normalized["n_responces"] = (
+        base_weight + response_count
+    ).astype("Int64")
     normalized["review"] = normalized.apply(
         lambda row: _compute_review(row, base_weight, threshold), axis=1
     )
