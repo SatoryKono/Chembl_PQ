@@ -136,6 +136,21 @@ def _choose_text(candidates: Iterable[Any]) -> Optional[str]:
     return None
 
 
+def _normalize_page(value: Any) -> Optional[str]:
+    text = to_text(value)
+    if not text:
+        return None
+    normalized = (
+        text.replace("–", "-")
+        .replace("—", "-")
+        .replace(" ", "")
+        .strip("-")
+    )
+    if not normalized:
+        return None
+    return normalized
+
+
 def _parse_int_candidate(value: Any) -> tuple[Optional[int], bool]:
     text = to_text(value)
     if not text:
@@ -204,10 +219,15 @@ def _validate_rows(document_df: pd.DataFrame) -> pd.DataFrame:
         invalid_doi = selected_doi is None
 
         title = _choose_text(
-            [row.get("title"), row.get("ChEMBL.title"), row.get("crossref.title")]
+            [row.get("title"), row.get("crossref.title"), row.get("ChEMBL.title")]
         )
         abstract = _choose_text([row.get("abstract"), row.get("ChEMBL.abstract")])
-        page = _choose_text([row.get("page"), row.get("ChEMBL.page")])
+        page_candidates = [
+            _normalize_page(row.get("page")),
+            _normalize_page(row.get("crossref.page")),
+            _normalize_page(row.get("ChEMBL.page")),
+        ]
+        page = _choose_text(page_candidates)
 
         new_volume: Optional[int] = None
         invalid_volume = False
