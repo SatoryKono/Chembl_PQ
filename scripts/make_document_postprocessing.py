@@ -28,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
-    from library.loaders import LoaderError, read_csv
+    from library.loaders import read_csv
 
 
     files_cfg = config.get("files", {})
@@ -38,7 +38,9 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     document_df = read_csv("document_csv", config)
 
     document_ref_key = _resolve_key(files_cfg, "document_reference_csv", "document_csv")
-    document_out_key  = document_ref_key
+    document_out_key = _resolve_key(
+        files_cfg, "document_out_csv", "document_reference_csv", "document_csv"
+    )
     activity_ref_key = _resolve_key(files_cfg, "activity_reference_csv", "activity_csv")
     citation_key = _resolve_key(
         files_cfg, "citation_reference_csv", "citation_fraction_csv", "citation_csv"
@@ -52,20 +54,7 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     if document_out_key == document_ref_key:
         document_out_df = document_ref_df
     else:
-
-        try:
-            document_out_df = read_csv(document_out_key, config)
-        except LoaderError as error:
-            if "File not found" not in str(error):
-                raise
-            LOGGER.warning(
-                "Document output CSV missing; falling back to reference dataset",
-                extra={
-                    "requested_key": document_out_key,
-                    "fallback_key": document_ref_key,
-                },
-            )
-            document_out_df = document_ref_df
+        document_out_df = read_csv(document_out_key, config)
 
 
     activity_df = read_csv(activity_ref_key, config)
