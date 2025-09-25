@@ -26,6 +26,24 @@ def to_text(value: Any) -> str:
     return stripped
 
 
+def normalize_string(value: Any, lower: bool = True) -> Any:
+    """Normalize scalar text values by trimming and optional lower-casing."""
+
+    if value is None:
+        return pd.NA
+    if isinstance(value, float) and pd.isna(value):
+        return pd.NA
+    if pd.isna(value):
+        return pd.NA
+
+    text = str(value).strip()
+    if lower:
+        text = text.lower()
+    if text == "":
+        return pd.NA
+    return text
+
+
 def _normalize_token(value: Any, lower: bool = True) -> Optional[str]:
     text = to_text(value)
     if text == "":
@@ -103,4 +121,56 @@ def clean_pipe(
     return series.apply(_process)
 
 
-__all__ = ["to_text", "clean_pipe"]
+def normalize_pipe(
+    value: Any,
+    alias_map: Optional[Dict[str, Optional[str]]] = None,
+    drop_list: Optional[Iterable[str]] = None,
+    sort: bool = True,
+) -> Any:
+    """Normalize pipe-delimited scalar values with aliasing and de-duplication."""
+
+    alias_normalized = _prepare_alias_map(alias_map)
+    drop_normalized = _prepare_drop_list(drop_list)
+
+    if value is None:
+        return pd.NA
+    if isinstance(value, float) and pd.isna(value):
+        return pd.NA
+    if pd.isna(value):
+        return pd.NA
+
+    token = _normalize_token(value)
+    if token is None:
+        return pd.NA
+
+    parts = [part.strip().lower() for part in token.split("|") if part.strip() != ""]
+    if not parts:
+        return pd.NA
+
+    cleaned: list[str] = []
+    for part in parts:
+        mapped = alias_normalized.get(part, part)
+        if mapped is None:
+            continue
+        if mapped in drop_normalized:
+            continue
+        cleaned.append(mapped)
+
+    if not cleaned:
+        return pd.NA
+
+    if sort:
+        cleaned = sorted(dict.fromkeys(cleaned))
+    else:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in cleaned:
+            if item not in seen:
+                seen.add(item)
+                ordered.append(item)
+        cleaned = ordered
+
+    return "|".join(cleaned)
+
+
+__all__ = ["to_text", "clean_pipe", "normalize_pipe", "normalize_string"]

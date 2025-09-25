@@ -7,9 +7,10 @@ import pandas as pd
 
 # Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
 #             2024-10-05 — добавлен справочник для подстановки all_names/nstereo.
+#             2024-10-10 — синхронизированы агрегации, нормализация текстов и проверка invalid_record.
 
 from .postprocess_document import _prepare_activity
-from .transforms import to_text
+from .transforms import normalize_pipe, normalize_string, to_text
 from .utils import (
     coerce_types,
     ensure_columns,
@@ -21,18 +22,22 @@ logger = logging.getLogger(__name__)
 
 
 def _aggregate_testitem(activity: pd.DataFrame) -> pd.DataFrame:
-    if activity.empty or "document_chembl_id" not in activity.columns:
-        return pd.DataFrame(columns=["document_chembl_id", "document_testitem_total"])
-    valid = activity[activity["document_chembl_id"].notna()].copy()
-    grouped = (
-        valid.groupby("document_chembl_id", dropna=False)
-        .agg(
-            document_testitem_total=(
-                "molecule_chembl_id",
-                lambda x: x.dropna().nunique(),
-            )
+    if activity.empty:
+        base = pd.DataFrame(
+            columns=["document_chembl_id", "document_testitem_total"]
         )
-        .reset_index()
+        return base.astype(
+            {"document_chembl_id": "string", "document_testitem_total": "Int64"}
+        )
+
+    prepared = _prepare_activity(activity)
+    distinct_pairs = prepared.drop_duplicates(
+        subset=["document_chembl_id", "molecule_chembl_id"]
+    )
+    grouped = (
+        distinct_pairs.groupby("document_chembl_id", dropna=False)
+        .size()
+        .reset_index(name="document_testitem_total")
     )
     aggregated = finalize_aggregate_columns(grouped, ["document_testitem_total"])
     return aggregated
@@ -98,7 +103,7 @@ def _apply_reference(
 
 def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     testitem_df = inputs["testitem"].copy()
-    activity_df = _prepare_activity(inputs.get("activity", pd.DataFrame()))
+    activity_df = inputs.get("activity", pd.DataFrame())
     reference_df = _prepare_reference(inputs.get("testitem_reference"))
 
     logger.info("Starting testitem post-processing", extra={"rows": len(testitem_df)})
@@ -119,19 +124,23 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     typed = coerce_types(testitem_df, base_schema)
     typed = _apply_reference(typed, reference_df)
 
+    cleaning_config = config.get("cleaning", {})
+    sort_pipes = bool(cleaning_config.get("sort_pipes", True))
+
+    if "pref_name" in typed.columns:
+        typed["pref_name"] = typed["pref_name"].map(normalize_string).astype("string")
+
+    if "all_names" in typed.columns:
+        typed["all_names"] = (
+            typed["all_names"]
+            .map(lambda value: normalize_pipe(value, sort=sort_pipes))
+            .astype("string")
+        )
+
     if "document_chembl_id" not in typed.columns:
         typed["document_chembl_id"] = pd.Series(
             pd.NA, index=typed.index, dtype="string"
         )
-
-    fillable_columns = [
-        "all_names",
-        "molecule_structures.standard_inchi_key",
-        "standard_inchi_key",
-    ]
-    for column in fillable_columns:
-        if column in typed.columns:
-            typed[column] = typed[column].fillna("")
 
     chirality_reference = int(
         config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
@@ -161,23 +170,31 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     invalid_rules = (
         config.get("pipeline", {}).get("testitem", {}).get("invalid_rules", {})
     )
-    molecule_type_expected = invalid_rules.get(
-        "molecule_type", "small molecule"
-    ).lower()
-    structure_type_expected = invalid_rules.get("structure_type", "mol").lower()
+    molecule_type_expected = invalid_rules.get("molecule_type")
+    structure_type_expected = invalid_rules.get("structure_type")
+
+    def _matches(value: object, expected: object) -> bool:
+        if expected is None:
+            return True
+        if pd.isna(value):
+            return False
+        return value == expected
 
     def _compute_invalid(row: pd.Series) -> bool:
-        molecule_type = str(row.get("molecule_type", "")).lower()
-        structure_type = str(row.get("structure_type", "")).lower()
-        inchi_key = to_text(
-            row.get(
-                "molecule_structures.standard_inchi_key",
-                row.get("standard_inchi_key", ""),
-            )
-        )
+        molecule_type_value = row.get("molecule_type")
+        structure_type_value = row.get("structure_type")
+
+        inchi_candidate = row.get("molecule_structures.standard_inchi_key")
+        if pd.isna(inchi_candidate) or inchi_candidate == "":
+            inchi_candidate = row.get("standard_inchi_key")
+        if pd.isna(inchi_candidate):
+            inchi_key = ""
+        else:
+            inchi_key = to_text(inchi_candidate)
+
         return not (
-            molecule_type == molecule_type_expected
-            and structure_type == structure_type_expected
+            _matches(molecule_type_value, molecule_type_expected)
+            and _matches(structure_type_value, structure_type_expected)
             and inchi_key != ""
         )
 
