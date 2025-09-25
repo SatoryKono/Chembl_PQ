@@ -1,5 +1,6 @@
 let
   // ===== Changelog =====
+  // 2024-10-17: Normalize review classification inputs to lowercase before scoring.
   // 2024-10-14: Restore protein_class_pred_* columns by retaining IUPHAR predictions in target export.
   // ===== Parameters =====
   // Paths: relative file locations. Encodings: named code pages. Delimiters: reusable separators. PathEncodingKeys: map path keys to encoding keys. Defaults: fallback keys for loaders. Tables: logical dataset handles for inputs/outputs.
@@ -2101,7 +2102,7 @@ let
                       (columnName as text) =>
                         let
                           value = Record.FieldOrDefault(currentRow, columnName, null),
-                          textValue = ToText(value)
+                          textValue = Text.Lower(ToText(value))
                         in
                           if textValue <> "" then 1 else 0
                     )
@@ -2115,10 +2116,10 @@ let
               "updated_review",
               each
                 let
-                  pubType = ToText(Record.FieldOrDefault(_, "publication_type", "")),
-                  scholarType = ToText(Record.FieldOrDefault(_, "scholar.PublicationTypes", "")),
-                  openAlexType = ToText(Record.FieldOrDefault(_, "OpenAlex.publication_type", "")),
-                  openAlexXref = ToText(Record.FieldOrDefault(_, "OpenAlex.crossref_type", "")),
+                  pubType = Text.Lower(ToText(Record.FieldOrDefault(_, "publication_type", ""))),
+                  scholarType = Text.Lower(ToText(Record.FieldOrDefault(_, "scholar.PublicationTypes", ""))),
+                  openAlexType = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.publication_type", ""))),
+                  openAlexXref = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.crossref_type", ""))),
                   baseReview = Record.FieldOrDefault(_, "review", false),
                   voteScore =
                     Number.From(Text.Contains(pubType, "review")) +
