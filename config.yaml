@@ -9,12 +9,12 @@ source:
 
 files:
 
-  document_csv: "data\input\output.document_20250924.csv"
-  activity_csv: "data\input\output.activity_20250924.csv"
-  citation_fraction_csv: "dictionary/_curation/citation_fraction.csv"
-  testitem_csv: "data\input\output.testitem_20250924.csv"
-  assay_csv: "data\input\output.assay_20250924.csv"
-  target_csv: "data\input\output.targets_20250924.csv"
+  document_csv: "e:\github\ChEMBL_data_acquisition\data\output\document\output.document_20250924.csv"
+  activity_csv: "e:\github\ChEMBL_data_acquisition\data\output\activity\output.activity_20250921.csv"
+  citation_fraction_csv: "e:\github\ChEMBL_data_acquisition\dictionary\_Curation\citation_fraction.csv"
+  testitem_csv: "e:\github\ChEMBL_data_acquisition\data\output\testitem\output.testitem_20250925.csv"
+  assay_csv:    "e:\github\ChEMBL_data_acquisition\data\output\assay\output.assay_20250924.csv"
+  target_csv:   "e:\github\ChEMBL_data_acquisition\data\output\target\output.targets_20250924.csv"
 
 
 io:
@@ -229,9 +229,9 @@ pipeline:
       src_assay_id: string
       src_id: Int64
       tissue_chembl_id: string
-      variant_sequence.sequence: string
-      variant_sequence.mutation: string
-      variant_sequence.isoform: string
+      sequence: string
+      mutation: string
+      isoform: string
       document_assay_total: Int64
     column_order:
       - assay_chembl_id
@@ -257,9 +257,9 @@ pipeline:
       - src_assay_id
       - src_id
       - tissue_chembl_id
-      - variant_sequence.sequence
-      - variant_sequence.mutation
-      - variant_sequence.isoform
+      - sequence
+      - mutation
+      - isoform
       - document_assay_total
   target:
     output_columns:
