@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import logging
 from typing import Dict
 
@@ -8,39 +7,14 @@ import pandas as pd
 # Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
 #             2024-10-05 — добавлен справочник для подстановки all_names/nstereo.
 #             2024-10-10 — синхронизированы агрегации, нормализация текстов и проверка invalid_record.
-
-from .postprocess_document import _prepare_activity
+#             2024-10-19 — убраны документные агрегаты из итогового набора данных.
 from .transforms import normalize_pipe, normalize_string, to_text
 from .utils import (
     coerce_types,
     ensure_columns,
-    finalize_aggregate_columns,
-    safe_merge,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _aggregate_testitem(activity: pd.DataFrame) -> pd.DataFrame:
-    if activity.empty:
-        base = pd.DataFrame(
-            columns=["document_chembl_id", "document_testitem_total"]
-        )
-        return base.astype(
-            {"document_chembl_id": "string", "document_testitem_total": "Int64"}
-        )
-
-    prepared = _prepare_activity(activity)
-    distinct_pairs = prepared.drop_duplicates(
-        subset=["document_chembl_id", "molecule_chembl_id"]
-    )
-    grouped = (
-        distinct_pairs.groupby("document_chembl_id", dropna=False)
-        .size()
-        .reset_index(name="document_testitem_total")
-    )
-    aggregated = finalize_aggregate_columns(grouped, ["document_testitem_total"])
-    return aggregated
 
 
 def _compute_unknown_chirality(series: pd.Series, reference: int) -> pd.Series:
@@ -103,7 +77,6 @@ def _apply_reference(
 
 def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     testitem_df = inputs["testitem"].copy()
-    activity_df = inputs.get("activity", pd.DataFrame())
     reference_df = _prepare_reference(inputs.get("testitem_reference"))
 
     logger.info("Starting testitem post-processing", extra={"rows": len(testitem_df)})
@@ -149,24 +122,6 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         typed.get("nstereo", pd.Series([], dtype="Int64")), chirality_reference
     )
 
-    aggregates = _aggregate_testitem(activity_df)
-    enriched = safe_merge(
-        typed,
-        aggregates,
-        on=["document_chembl_id"],
-        how="left",
-    )
-
-    default_total = pd.Series(0, index=enriched.index, dtype="Int64")
-    enriched["document_testitem_total"] = (
-        pd.to_numeric(
-            enriched.get("document_testitem_total", default_total),
-            errors="coerce",
-        )
-        .fillna(0)
-        .astype("Int64")
-    )
-
     invalid_rules = (
         config.get("pipeline", {}).get("testitem", {}).get("invalid_rules", {})
     )
@@ -198,17 +153,21 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             and inchi_key != ""
         )
 
-    enriched["invalid_record"] = enriched.apply(_compute_invalid, axis=1)
+    typed["invalid_record"] = typed.apply(_compute_invalid, axis=1)
 
-    if "nstereo" in enriched.columns:
-        enriched = enriched.drop(columns=["nstereo"])
+    processed = typed.drop(columns=["nstereo"], errors="ignore")
+
+    columns_to_remove = ["document_chembl_id", "document_testitem_total"]
+    processed = processed.drop(
+        columns=[col for col in columns_to_remove if col in processed.columns]
+    )
 
     pipeline_testitem = config.get("pipeline", {}).get("testitem", {})
     column_types = pipeline_testitem.get("type_map", {})
     column_order = pipeline_testitem.get("column_order", [])
 
     required_columns = column_order or list(column_types.keys())
-    completed = ensure_columns(enriched, required_columns, column_types)
+    completed = ensure_columns(processed, required_columns, column_types)
     typed_result = coerce_types(completed, column_types)
 
     if column_order:
