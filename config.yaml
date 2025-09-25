@@ -14,7 +14,7 @@ files:
   citation_fraction_csv: "dictionary/_curation/citation_fraction.csv"
   testitem_csv: "data\input\output.testitem_20250924.csv"
   assay_csv: "data\input\output.assay_20250924.csv"
-  target_csv: "data\input\output.target_20250924.csv"
+  target_csv: "data\input\output.targets_20250924.csv"
 
 
 io:
@@ -229,7 +229,9 @@ pipeline:
       src_assay_id: string
       src_id: Int64
       tissue_chembl_id: string
-      variant_sequence: string
+      variant_sequence.sequence: string
+      variant_sequence.mutation: string
+      variant_sequence.isoform: string
       document_assay_total: Int64
     column_order:
       - assay_chembl_id
@@ -255,7 +257,9 @@ pipeline:
       - src_assay_id
       - src_id
       - tissue_chembl_id
-      - variant_sequence
+      - variant_sequence.sequence
+      - variant_sequence.mutation
+      - variant_sequence.isoform
       - document_assay_total
   target:
     output_columns:

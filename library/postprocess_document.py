@@ -6,21 +6,44 @@ from typing import Dict
 import pandas as pd
 
 from .transforms import clean_pipe, to_text
-from .utils import coerce_types, finalize_aggregate_columns
+from .utils import coerce_types, ensure_columns, finalize_aggregate_columns
 
 logger = logging.getLogger(__name__)
 
 
+ACTIVITY_SCHEMA = {
+    "activity_chembl_id": "Int64",
+    "assay_chembl_id": "string",
+    "molecule_chembl_id": "string",
+    "document_chembl_id": "string",
+    "is_citation": "boolean",
+}
+
+
 def _prepare_activity(activity: pd.DataFrame) -> pd.DataFrame:
-    schema = {
-        "activity_chembl_id": "Int64",
-        "assay_chembl_id": "string",
-        "molecule_chembl_id": "string",
-        "document_chembl_id": "string",
-        "is_citation": "boolean",
-    }
-    typed = coerce_types(activity, schema)
-    return typed
+    if activity.empty:
+        return pd.DataFrame(columns=ACTIVITY_SCHEMA.keys()).astype(ACTIVITY_SCHEMA)
+
+    prepared = activity.copy()
+
+    rename_map = {}
+    if "activity_chembl_id" not in prepared.columns:
+        for candidate in ("activity_id", "ACTIVITY_ID"):
+            if candidate in prepared.columns:
+                rename_map[candidate] = "activity_chembl_id"
+                break
+    if rename_map:
+        prepared = prepared.rename(columns=rename_map)
+
+    for column, dtype in ACTIVITY_SCHEMA.items():
+        if column not in prepared.columns:
+            if dtype == "boolean":
+                prepared[column] = False
+            else:
+                prepared[column] = pd.NA
+
+    typed = coerce_types(prepared, ACTIVITY_SCHEMA)
+    return typed[list(ACTIVITY_SCHEMA.keys())]
 
 
 def _aggregate_activity(
@@ -50,7 +73,15 @@ def _aggregate_activity(
             }
         )
 
-    activity = activity.copy()
+    required_columns = [
+        "document_chembl_id",
+        "activity_chembl_id",
+        "is_citation",
+        "assay_chembl_id",
+        "molecule_chembl_id",
+    ]
+    activity = ensure_columns(activity.copy(), required_columns, ACTIVITY_SCHEMA)
+    activity = coerce_types(activity, ACTIVITY_SCHEMA)
     activity = activity[activity["document_chembl_id"].notna()]
 
     grouped = (
@@ -152,6 +183,9 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     activity_df = inputs.get("activity", pd.DataFrame())
     thresholds_df = inputs.get("citation_fraction", pd.DataFrame())
 
+    pipeline_cfg = config.get("pipeline", {})
+    document_cfg = pipeline_cfg.get("document", {})
+
     logger.info("Starting document post-processing", extra={"rows": len(document_df)})
 
     activity_prepared = _prepare_activity(activity_df)
@@ -178,7 +212,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     normalized = _apply_classification_rules(merged, config)
 
-    review_cfg = config.get("pipeline", {}).get("document", {}).get("review", {})
+    review_cfg = document_cfg.get("review", {})
     base_weight = int(review_cfg.get("base_weight", 2))
     threshold = float(review_cfg.get("threshold", 0.335))
     response_columns = review_cfg.get("response_columns", [])
@@ -197,10 +231,17 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "K_min_significant" in normalized.columns:
         normalized = normalized.drop(columns=["K_min_significant"])
 
-    column_types = config.get("pipeline", {}).get("document", {}).get("type_map", {})
+
+    column_types = document_cfg.get("type_map", {})
+    column_order = document_cfg.get("column_order", [])
+    required_columns: set[str] = set(column_types.keys()) | set(column_order)
+    if required_columns:
+        normalized = ensure_columns(normalized, required_columns, column_types)
+
+
     typed = coerce_types(normalized, column_types)
 
-    formatters = config.get("pipeline", {}).get("document", {}).get("formatters", {})
+    formatters = document_cfg.get("formatters", {})
     zero_pad = formatters.get("zero_pad", {})
     for column, width in zero_pad.items():
         if column in typed.columns:
@@ -216,10 +257,9 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
                 .astype("string")
             )
 
-    column_order = (
-        config.get("pipeline", {}).get("document", {}).get("column_order", [])
-    )
+
     if column_order:
+        typed = ensure_columns(typed, column_order, column_types)
         missing = [col for col in column_order if col not in typed.columns]
         if missing:
             raise ValueError(f"Document output is missing columns: {missing}")

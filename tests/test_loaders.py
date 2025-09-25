@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -32,6 +33,24 @@ def test_read_csv(tmp_path: Path) -> None:
 
     assert list(df.columns) == ["col1", "col2"]
     assert df.iloc[0, 0] == 1
+
+
+def test_read_csv_sets_low_memory(monkeypatch, tmp_path: Path) -> None:
+    sample_path = tmp_path / "input.csv"
+    sample_path.write_text("col1\n1\n", encoding="utf-8")
+    config = _build_config(tmp_path, "input.csv")
+
+    captured: dict[str, Any] = {}
+
+    def fake_read_csv(path: Path, **kwargs):  # type: ignore[override]
+        captured["kwargs"] = kwargs
+        return pd.DataFrame({"col1": [1]})
+
+    monkeypatch.setattr(loaders.pd, "read_csv", fake_read_csv)
+
+    loaders.read_csv("sample", config)
+
+    assert captured["kwargs"]["low_memory"] is False
 
 
 def test_write_csv(tmp_path: Path) -> None:

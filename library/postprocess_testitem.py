@@ -5,9 +5,16 @@ from typing import Dict
 
 import pandas as pd
 
+# Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
+
 from .postprocess_document import _prepare_activity
 from .transforms import to_text
-from .utils import coerce_types, finalize_aggregate_columns
+from .utils import (
+    coerce_types,
+    ensure_columns,
+    finalize_aggregate_columns,
+    safe_merge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +59,27 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         "molecule_type": "string",
         "structure_type": "string",
         "is_radical": "boolean",
+        "molecule_structures.standard_inchi_key": "string",
         "standard_inchi_key": "string",
+        "unknown_chirality": "string",
         "nstereo": "Int64",
         "document_chembl_id": "string",
     }
     typed = coerce_types(testitem_df, base_schema)
 
-    if "all_names" in typed.columns:
-        typed["all_names"] = typed["all_names"].fillna("")
-    if "standard_inchi_key" in typed.columns:
-        typed["standard_inchi_key"] = typed["standard_inchi_key"].fillna("")
+    if "document_chembl_id" not in typed.columns:
+        typed["document_chembl_id"] = pd.Series(
+            pd.NA, index=typed.index, dtype="string"
+        )
+
+    fillable_columns = [
+        "all_names",
+        "molecule_structures.standard_inchi_key",
+        "standard_inchi_key",
+    ]
+    for column in fillable_columns:
+        if column in typed.columns:
+            typed[column] = typed[column].fillna("")
 
     chirality_reference = int(
         config.get("pipeline", {}).get("testitem", {}).get("chirality_reference", 1)
@@ -71,13 +89,21 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     )
 
     aggregates = _aggregate_testitem(activity_df)
-    enriched = typed.merge(
+    enriched = safe_merge(
+        typed,
         aggregates,
-        on="document_chembl_id",
+        on=["document_chembl_id"],
         how="left",
     )
+
+    default_total = pd.Series(0, index=enriched.index, dtype="Int64")
     enriched["document_testitem_total"] = (
-        enriched["document_testitem_total"].fillna(0).astype("Int64")
+        pd.to_numeric(
+            enriched.get("document_testitem_total", default_total),
+            errors="coerce",
+        )
+        .fillna(0)
+        .astype("Int64")
     )
 
     invalid_rules = (
@@ -91,7 +117,12 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     def _compute_invalid(row: pd.Series) -> bool:
         molecule_type = str(row.get("molecule_type", "")).lower()
         structure_type = str(row.get("structure_type", "")).lower()
-        inchi_key = to_text(row.get("standard_inchi_key", ""))
+        inchi_key = to_text(
+            row.get(
+                "molecule_structures.standard_inchi_key",
+                row.get("standard_inchi_key", ""),
+            )
+        )
         return not (
             molecule_type == molecule_type_expected
             and structure_type == structure_type_expected
@@ -103,12 +134,14 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if "nstereo" in enriched.columns:
         enriched = enriched.drop(columns=["nstereo"])
 
-    column_types = config.get("pipeline", {}).get("testitem", {}).get("type_map", {})
-    typed_result = coerce_types(enriched, column_types)
+    pipeline_testitem = config.get("pipeline", {}).get("testitem", {})
+    column_types = pipeline_testitem.get("type_map", {})
+    column_order = pipeline_testitem.get("column_order", [])
 
-    column_order = (
-        config.get("pipeline", {}).get("testitem", {}).get("column_order", [])
-    )
+    required_columns = column_order or list(column_types.keys())
+    completed = ensure_columns(enriched, required_columns, column_types)
+    typed_result = coerce_types(completed, column_types)
+
     if column_order:
         missing = [col for col in column_order if col not in typed_result.columns]
         if missing:
