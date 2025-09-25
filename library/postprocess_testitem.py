@@ -200,6 +200,9 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         "document_chembl_id",
         "document_testitem_total",
         "molecule_structures.canonical_smiles",
+        "molecule_type",
+        "structure_type",
+        "is_radical",
     ]
     processed = processed.drop(
         columns=[col for col in columns_to_remove if col in processed.columns]

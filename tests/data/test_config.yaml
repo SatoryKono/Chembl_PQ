@@ -166,9 +166,6 @@ pipeline:
       molecule_chembl_id: string
       pref_name: string
       all_names: string
-      molecule_type: string
-      structure_type: string
-      is_radical: bool
       standard_inchi_key: string
       canonical_smiles: string
       skeleton_inchi_key: string
@@ -178,9 +175,6 @@ pipeline:
       - molecule_chembl_id
       - pref_name
       - all_names
-      - molecule_type
-      - structure_type
-      - is_radical
       - standard_inchi_key
       - canonical_smiles
       - skeleton_inchi_key
