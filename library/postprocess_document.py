@@ -151,8 +151,7 @@ def _compute_review(row: pd.Series, base_weight: int, threshold: float) -> bool:
     n_responses = row.get("n_responces", 1)
 
     def contains_review(value: str) -> bool:
-        tokens = [token.strip() for token in value.split("|") if token.strip()]
-        return "review" in tokens
+        return "review" in value
 
     vote_score = (
         int(contains_review(pub_type))
