@@ -30,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     from library.loaders import LoaderError, read_csv
 
+
     files_cfg = config.get("files", {})
     if not isinstance(files_cfg, dict):  # pragma: no cover - defensive
         raise TypeError("config['files'] must be a mapping")
@@ -53,6 +54,7 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     if document_out_key == document_ref_key:
         document_out_df = document_ref_df
     else:
+
         try:
             document_out_df = read_csv(document_out_key, config)
         except LoaderError as error:
@@ -66,6 +68,7 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
                 },
             )
             document_out_df = document_ref_df
+
 
     activity_df = read_csv(activity_ref_key, config)
 
