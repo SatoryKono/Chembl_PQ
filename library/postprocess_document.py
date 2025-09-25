@@ -442,12 +442,12 @@ def _build_completed(row: pd.Series) -> str:
             return "0" * digits
         return text.zfill(digits)
 
-    completed_year = component("completed.year", 4)
-    completed_month = component("completed.month", 2)
-    completed_day = component("completed.day", 2)
-    revised_year = component("revised.year", 4)
-    revised_month = component("revised.month", 2)
-    revised_day = component("revised.day", 2)
+    completed_year = component("PubMed.YearCompleted", 4)
+    completed_month = component("PubMed.MonthCompleted", 2)
+    completed_day = component("PubMed.DayCompleted", 2)
+    revised_year = component("PubMed.YearRevised", 4)
+    revised_month = component("PubMed.MonthRevised", 2)
+    revised_day = component("PubMed.DayRevised", 2)
     chembl_year = component("ChEMBL.year", 4)
 
     has_completed = (
@@ -521,10 +521,10 @@ def _build_validation_frame(validated: pd.DataFrame) -> pd.DataFrame:
             result["PubMed.MeSH_Qualifiers"], result["OpenAlex.MeSH.qualifiers"]
         )
 
-    if {"completed.year", "completed.month", "completed.day"}.issubset(result.columns) or {
-        "revised.year",
-        "revised.month",
-        "revised.day",
+    if {"PubMed.YearCompleted", "PubMed.MonthCompleted", "PubMed.DayCompleted"}.issubset(result.columns) or {
+        "PubMed.YearRevised",
+        "PubMed.MonthRevised",
+        "PubMed.DayRevised",
     }.issubset(result.columns):
         result["completed"] = result.apply(_build_completed, axis=1)
     else:
