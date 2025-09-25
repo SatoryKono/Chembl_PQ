@@ -1,3 +1,3 @@
-molecule_chembl_id,pref_name,all_names,molecule_type,structure_type,is_radical,standard_inchi_key,nstereo,document_chembl_id
-M1,Drug A,,Small molecule,MOL,false,KEY1,,DOC1
-M3,Drug C,,Biologic,PROT,false,,,DOC2
+molecule_chembl_id,pref_name,all_names,molecule_structures.canonical_smiles,molecule_type,structure_type,is_radical,standard_inchi_key,nstereo,document_chembl_id
+M1,Drug A,,C1=CC=CC=C1,Small molecule,MOL,false,KEY1,,DOC1
+M3,Drug C,,,Biologic,PROT,false,,,DOC2

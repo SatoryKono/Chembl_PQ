@@ -19,6 +19,7 @@ def test_testitem_postprocess(testitem_inputs, test_config) -> None:
             "structure_type": ["MOL", "PROT"],
             "is_radical": [False, False],
             "standard_inchi_key": ["KEY1", pd.NA],
+            "canonical_smiles": ["C1=CC=CC=C1", pd.NA],
             "skeleton_inchi_key": ["KEY1", pd.NA],
             "unknown_chirality": [False, True],
             "invalid_record": [False, True],
