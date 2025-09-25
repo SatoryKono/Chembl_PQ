@@ -15,8 +15,7 @@ Columns, ordering and data types are enforced by ``pipeline.*.type_map`` and
 ## Test item
 
 * Primary key: ``molecule_chembl_id``.
-* Enrichments: ``document_testitem_total`` (per-document molecule count) and
-  ``invalid_record`` (quality flag driven by the config rules).
+* Enrichments: ``invalid_record`` (quality flag driven by the config rules).
 * ``unknown_chirality`` converts the Power Query logic to boolean flags.
 
 ## Assay
