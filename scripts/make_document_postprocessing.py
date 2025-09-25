@@ -36,17 +36,32 @@ def main() -> None:
         if "document_reference_csv" in files_cfg
         else "document_csv"
     )
+    activity_ref_key = (
+        "activity_reference_csv"
+        if "activity_reference_csv" in files_cfg
+        else "activity_csv"
+    )
+    activity_ref_key = (
+        "activity_reference_csv"
+        if "activity_reference_csv" in files_cfg
+        else "activity_csv"
+    )
+    citation_ref_key = (
+        "citation_fraction_csv"
+        if "citation_fraction_csv" in files_cfg
+        else "citation_csv"
+    )
     document_ref_df = read_csv(document_ref_key, config)
-    activity_df = read_csv("activity_csv", config)
-    citation_df = read_csv("citation_fraction_csv", config)
+    activity_ref_df = read_csv(activity_ref_key, config)
+    citation_ref_df = read_csv(citation_ref_key, config)
 
     result = run_document(
         {
             "document": document_df,
             "document_out": document_out_df,
             "document_reference": document_ref_df,
-            "activity": activity_df,
-            "citation_fraction": citation_df,
+            "activity":  activity_ref_df,
+            "citation_fraction": citation_ref_key,
         },
         config,
     )
