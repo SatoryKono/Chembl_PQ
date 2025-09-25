@@ -104,8 +104,8 @@ def finalize_aggregate_columns(
     for column in columns:
         if column not in result.columns:
             continue
-        result[column] = (
-            pd.to_numeric(result[column], errors="coerce").fillna(0).astype("Int64")
+        result[column] = pd.to_numeric(result[column], errors="coerce").astype(
+            "Int64"
         )
     return result
 
