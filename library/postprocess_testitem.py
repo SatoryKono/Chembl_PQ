@@ -6,6 +6,7 @@ from typing import Dict
 import pandas as pd
 
 # Changelog: 2024-09-25 — расширена типизация и вывод колонок для согласования с M-скриптом.
+#             2024-10-05 — добавлен справочник для подстановки all_names/nstereo.
 
 from .postprocess_document import _prepare_activity
 from .transforms import to_text
@@ -46,9 +47,59 @@ def _compute_unknown_chirality(series: pd.Series, reference: int) -> pd.Series:
     return series.apply(_transform)
 
 
+def _prepare_reference(reference_df: pd.DataFrame | None) -> pd.DataFrame:
+    schema = {
+        "molecule_chembl_id": "string",
+        "all_names": "string",
+        "nstereo": "Int64",
+    }
+    if reference_df is None or reference_df.empty:
+        return pd.DataFrame(columns=list(schema.keys()))
+
+    completed = ensure_columns(reference_df, list(schema.keys()), schema)
+    typed = coerce_types(completed, schema)
+    filtered = typed[typed["molecule_chembl_id"].notna()].copy()
+    selected = filtered.loc[:, list(schema.keys())]
+    deduped = selected.drop_duplicates(subset=["molecule_chembl_id"])
+    return deduped.reset_index(drop=True)
+
+
+def _apply_reference(
+    testitem_df: pd.DataFrame, reference_df: pd.DataFrame
+) -> pd.DataFrame:
+    if reference_df.empty or "molecule_chembl_id" not in testitem_df.columns:
+        return testitem_df
+
+    result = testitem_df.copy()
+    reference_index = reference_df.set_index("molecule_chembl_id")
+    override_columns = [
+        column
+        for column in ("all_names", "nstereo")
+        if column in reference_index.columns
+    ]
+
+    if not override_columns:
+        return result
+
+    molecule_ids = result.get("molecule_chembl_id")
+    for column in override_columns:
+        mapped = molecule_ids.map(reference_index[column])
+        if column in result.columns:
+            result[column] = mapped.where(mapped.notna(), result[column])
+        else:
+            result[column] = mapped
+
+    type_spec = {
+        "all_names": "string",
+        "nstereo": "Int64",
+    }
+    return coerce_types(result, {col: type_spec[col] for col in override_columns})
+
+
 def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     testitem_df = inputs["testitem"].copy()
     activity_df = _prepare_activity(inputs.get("activity", pd.DataFrame()))
+    reference_df = _prepare_reference(inputs.get("testitem_reference"))
 
     logger.info("Starting testitem post-processing", extra={"rows": len(testitem_df)})
 
@@ -66,6 +117,7 @@ def run(inputs: Dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         "document_chembl_id": "string",
     }
     typed = coerce_types(testitem_df, base_schema)
+    typed = _apply_reference(typed, reference_df)
 
     if "document_chembl_id" not in typed.columns:
         typed["document_chembl_id"] = pd.Series(

@@ -12,6 +12,7 @@ files:
   activity_csv: "activity.csv"
   citation_fraction_csv: "citation_fraction.csv"
   testitem_csv: "testitem.csv"
+  testitem_reference_csv: "testitem_reference.csv"
   assay_csv: "assay.csv"
   target_csv: "target.csv"
 
