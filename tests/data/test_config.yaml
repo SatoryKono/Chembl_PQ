@@ -8,8 +8,7 @@ source:
     auth: env
 
 files:
-  document_csv: "document.csv"
-  document_out_csv: "document_out.csv"
+  document_csv: "document_out.csv"
   document_reference_csv: "document_reference.csv"
   activity_csv: "activity.csv"
   citation_fraction_csv: "citation_fraction.csv"

@@ -23,8 +23,13 @@ def test_config() -> Dict[str, object]:
 @pytest.fixture()
 def document_inputs(test_config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
     base = Path(test_config["source"]["base_path"])
-    document_df = pd.read_csv(base / test_config["files"]["document_csv"])
-    document_out_df = pd.read_csv(base / test_config["files"]["document_out_csv"])
+    files_cfg = test_config["files"]
+    document_df = pd.read_csv(base / files_cfg["document_csv"])
+    document_out_path = files_cfg.get("document_out_csv")
+    if document_out_path:
+        document_out_df = pd.read_csv(base / document_out_path)
+    else:
+        document_out_df = document_df
     document_reference_df = pd.read_csv(
         base / test_config["files"]["document_reference_csv"]
     )

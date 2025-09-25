@@ -56,7 +56,7 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
 
     document_ref_key = _resolve_key(files_cfg, "document_reference_csv", "document_csv")
     document_out_key = _resolve_key(
-        files_cfg, "document_out_csv", "document_reference_csv", "document_csv"
+        files_cfg, "document_out_csv", "document_csv", "document_reference_csv"
     )
     activity_ref_key = _resolve_key(files_cfg, "activity_reference_csv", "activity_csv")
     citation_key = _resolve_key(
@@ -69,7 +69,9 @@ def get_document_data(config: Dict[str, object]) -> Dict[str, pd.DataFrame]:
         document_ref_df = read_csv(document_ref_key, config)
         document_ref_df = _drop_columns(document_ref_df, EXCLUDED_COLUMNS)
 
-    if document_out_key == document_ref_key:
+    if document_out_key == "document_csv":
+        document_out_df = document_df
+    elif document_out_key == document_ref_key:
         document_out_df = document_ref_df
     else:
         document_out_df = read_csv(document_out_key, config)
