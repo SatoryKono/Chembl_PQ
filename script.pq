@@ -105,11 +105,64 @@ let
       MinLength = 5,
       MaxLength = 300
     ],
+    ColumnSets = [
+      Document = [
+        ReferenceNestedColumn = "DocumentReference",
+        ReferenceSourceColumns = {"classification", "document_contains_external_links", "is_experimental_doc"},
+        ReferenceTargetColumns = {"review", "document_contains_external_links", "is_experimental_doc"},
+        MetricsNestedColumn = "DocumentMetrics",
+        MetricsColumns = {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"},
+        MetricsJoinColumn = "document_chembl_id",
+        VerboseColumns = {
+          "doi_same_count",
+          "invalid_doi",
+          "reason",
+          "consensus_doi",
+          "consensus_support",
+          "pm_doi_norm",
+          "pm_valid",
+          "chembl_doi_norm",
+          "chembl_valid",
+          "scholar_doi_norm",
+          "scholar_valid",
+          "crossref_doi_norm",
+          "crossref_valid",
+          "openalex_doi_norm",
+          "openalex_valid",
+          "pm_doi_raw",
+          "chembl_doi_raw",
+          "scholar_doi_raw",
+          "crossref_doi_raw",
+          "openalex_doi_raw",
+          "peers_valid_distinct"
+        },
+        ReviewSourceColumns = [
+          PubMed = "publication_type",
+          Scholar = "scholar.PublicationTypes",
+          OpenAlexType = "OpenAlex.publication_type",
+          OpenAlexCrossref = "OpenAlex.crossref_type",
+          OpenAlexGenre = "OpenAlex.Genre",
+          CrossrefType = "crossref.publication_type"
+        ],
+        ReviewVoteColumns = {
+          "publication_type",
+          "scholar.PublicationTypes",
+          "OpenAlex.publication_type",
+          "OpenAlex.crossref_type"
+        },
+        ResponseCountColumn = "n_responces",
+        ReviewColumn = "review",
+        ExperimentalColumn = "is_experimental",
+        DocumentIdColumn = "ChEMBL.document_chembl_id"
+      ]
+    ],
     ColumnCatalog = [
       ProteinClassification = "protein_classifications"
     ]
   ],
 
+  ColumnSets = Record.FieldOrDefault(Parameters, "ColumnSets", []),
+  DocumentColumnSets = Record.FieldOrDefault(ColumnSets, "Document", []),
   ColumnCatalog = Record.Field(Parameters, "ColumnCatalog"),
   ProteinClassificationColumnName = Record.Field(ColumnCatalog, "ProteinClassification"),
   TargetColumnDrops = List.RemoveNulls({ProteinClassificationColumnName}),
@@ -863,6 +916,68 @@ let
         ReplaceTextInColumn = replaceTextInColumn,
         ZipLists = zipLists,
         CoalesceColumns = coalesceColumns
+      ],
+  DocumentHelpers =
+    let
+      normalizeList = Helpers[NormalizeColumnList],
+      defaultReviewSources = [
+        PubMed = "publication_type",
+        Scholar = "scholar.PublicationTypes",
+        OpenAlexType = "OpenAlex.publication_type",
+        OpenAlexCrossref = "OpenAlex.crossref_type",
+        OpenAlexGenre = "OpenAlex.Genre",
+        CrossrefType = "crossref.publication_type"
+      ],
+      reviewSourceColumnsRaw = Record.FieldOrDefault(DocumentColumnSets, "ReviewSourceColumns", defaultReviewSources),
+      reviewSourceColumns =
+        if Value.Is(reviewSourceColumnsRaw, type record) then
+          Record.Combine({defaultReviewSources, reviewSourceColumnsRaw})
+        else
+          defaultReviewSources,
+      reviewVoteColumnsDefault = {
+        reviewSourceColumns[PubMed],
+        reviewSourceColumns[Scholar],
+        reviewSourceColumns[OpenAlexType],
+        reviewSourceColumns[OpenAlexCrossref]
+      },
+      referenceNestedColumn = Record.FieldOrDefault(DocumentColumnSets, "ReferenceNestedColumn", "DocumentReference"),
+      referenceSourceColumns = normalizeList(Record.FieldOrDefault(DocumentColumnSets, "ReferenceSourceColumns", {})),
+      referenceTargetColumnsRaw = Record.FieldOrDefault(DocumentColumnSets, "ReferenceTargetColumns", null),
+      referenceTargetColumns =
+        if referenceTargetColumnsRaw = null then
+          referenceSourceColumns
+        else
+          normalizeList(referenceTargetColumnsRaw),
+      metricsNestedColumn = Record.FieldOrDefault(DocumentColumnSets, "MetricsNestedColumn", "DocumentMetrics"),
+      metricsColumns = normalizeList(Record.FieldOrDefault(DocumentColumnSets, "MetricsColumns", {})),
+      metricsJoinColumn = Record.FieldOrDefault(DocumentColumnSets, "MetricsJoinColumn", "document_chembl_id"),
+      verboseColumns = normalizeList(Record.FieldOrDefault(DocumentColumnSets, "VerboseColumns", {})),
+      reviewVoteColumns = normalizeList(Record.FieldOrDefault(DocumentColumnSets, "ReviewVoteColumns", reviewVoteColumnsDefault)),
+      responseCountColumn = Record.FieldOrDefault(DocumentColumnSets, "ResponseCountColumn", "n_responces"),
+      reviewColumnName = Record.FieldOrDefault(DocumentColumnSets, "ReviewColumn", "review"),
+      experimentalColumnName = Record.FieldOrDefault(DocumentColumnSets, "ExperimentalColumn", "is_experimental"),
+      documentIdColumnName = Record.FieldOrDefault(DocumentColumnSets, "DocumentIdColumn", "ChEMBL.document_chembl_id")
+    in
+      [
+        ReferenceNestedColumn = referenceNestedColumn,
+        ReferenceSourceColumns = referenceSourceColumns,
+        ReferenceTargetColumns = referenceTargetColumns,
+        MetricsNestedColumn = metricsNestedColumn,
+        MetricsColumns = metricsColumns,
+        MetricsJoinColumn = metricsJoinColumn,
+        VerboseColumns = verboseColumns,
+        ReviewSources = reviewSourceColumns,
+        ReviewVoteColumns = reviewVoteColumns,
+        ResponseCountColumn = responseCountColumn,
+        ReviewColumn = reviewColumnName,
+        ExperimentalColumn = experimentalColumnName,
+        DocumentIdColumn = documentIdColumnName,
+        ExpandReference = (tbl as table) as table =>
+          Helpers[ExpandTableColumnSafe](tbl, referenceNestedColumn, referenceSourceColumns, referenceTargetColumns),
+        ExpandMetrics = (tbl as table) as table =>
+          Helpers[ExpandTableColumnSafe](tbl, metricsNestedColumn, metricsColumns),
+        DropVerboseColumns = (tbl as table) as table =>
+          Helpers[RemoveColumnsSafe](tbl, verboseColumns)
       ],
   ToText = Helpers[ToText],
   NormalizeWhitespace = Helpers[NormalizeWhitespace],
@@ -1962,33 +2077,7 @@ let
                 issnValue & ":" & completedValue & ":" & pmidValue,
             type text
           ),
-          withoutVerbose = Table.RemoveColumns(
-            withSort,
-            {
-              "doi_same_count",
-              "invalid_doi",
-              "reason",
-              "consensus_doi",
-              "consensus_support",
-              "pm_doi_norm",
-              "pm_valid",
-              "chembl_doi_norm",
-              "chembl_valid",
-              "scholar_doi_norm",
-              "scholar_valid",
-              "crossref_doi_norm",
-              "crossref_valid",
-              "openalex_doi_norm",
-              "openalex_valid",
-              "pm_doi_raw",
-              "chembl_doi_raw",
-              "scholar_doi_raw",
-              "crossref_doi_raw",
-              "openalex_doi_raw",
-              "peers_valid_distinct"
-            },
-            MissingField.Ignore
-          ),
+          withoutVerbose = DocumentHelpers[DropVerboseColumns](withSort),
           ordered = Table.ReorderColumns(withoutVerbose, List.Sort(Table.ColumnNames(withoutVerbose)))
         in
           ordered,
@@ -2003,6 +2092,15 @@ let
       //   - Таблица документов с согласованной схемой и типами для downstream-потребителей.
       BuildDocumentTable = () as table =>
         let
+          referenceNestedColumn = DocumentHelpers[ReferenceNestedColumn],
+          metricsNestedColumn = DocumentHelpers[MetricsNestedColumn],
+          reviewColumnName = DocumentHelpers[ReviewColumn],
+          experimentalColumnName = DocumentHelpers[ExperimentalColumn],
+          responseCountColumn = DocumentHelpers[ResponseCountColumn],
+          documentIdColumn = DocumentHelpers[DocumentIdColumn],
+          metricsJoinColumn = DocumentHelpers[MetricsJoinColumn],
+          reviewSources = DocumentHelpers[ReviewSources],
+          reviewVoteColumns = DocumentHelpers[ReviewVoteColumns],
           documentSource = DocumentInput[MergeSources](Data[Document_out]),
           validatedRows = Validation[ValidateAll](documentSource),
           validationFrame = BuildValidationFrame(validatedRows),
@@ -2013,36 +2111,27 @@ let
             {"PMID"},
             referenceTable,
             {"pubmed_id"},
-            "DocumentReference",
+            referenceNestedColumn,
             JoinKind.LeftOuter
           ),
-          expandedReference = ExpandTableColumnSafe(
-            withReference,
-            "DocumentReference",
-            {"classification", "document_contains_external_links", "is_experimental_doc"},
-            {"review", "document_contains_external_links", "is_experimental_doc"}
-          ),
+          expandedReference = DocumentHelpers[ExpandReference](withReference),
           reviewSanitized =
             let
-              replaced = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {"review"}),
-              typedNumber = Helpers[TransformColumnTypesSafe](replaced, {{"review", Int64.Type}})
+              replaced = Table.ReplaceValue(expandedReference, "", 0, Replacer.ReplaceValue, {reviewColumnName}),
+              typedNumber = Helpers[TransformColumnTypesSafe](replaced, {{reviewColumnName, Int64.Type}})
             in
-              Helpers[TransformColumnTypesSafe](typedNumber, {{"review", type logical}}),
-          ensuredDocumentId = EnsureColumn(reviewSanitized, "ChEMBL.document_chembl_id", null, type text),
+              Helpers[TransformColumnTypesSafe](typedNumber, {{reviewColumnName, type logical}}),
+          ensuredDocumentId = EnsureColumn(reviewSanitized, documentIdColumn, null, type text),
           metricsTable = citations[get_citations_fraction](),
           withMetrics = Table.NestedJoin(
             ensuredDocumentId,
-            {"ChEMBL.document_chembl_id"},
+            {documentIdColumn},
             metricsTable,
-            {"document_chembl_id"},
-            "DocumentMetrics",
+            {metricsJoinColumn},
+            metricsNestedColumn,
             JoinKind.LeftOuter
           ),
-          expandedMetrics = ExpandTableColumnSafe(
-            withMetrics,
-            "DocumentMetrics",
-            {"n_activity", "citations", "n_assay", "n_testitem", "significant_citations_fraction"}
-          ),
+          expandedMetrics = DocumentHelpers[ExpandMetrics](withMetrics),
           dropJournalish = {"journal-article", "journal article", "article", "journal"},
           dropSupportish =
             {
@@ -2070,12 +2159,12 @@ let
           aliasCrossrefPubType = [#"journal-article" = null, article = null],
           classificationConfigs =
             {
-              [Column = "publication_type", Alias = aliasPublicationType, Drop = List.Union({dropJournalish, dropSupportish, {""}})],
-              [Column = "scholar.PublicationTypes", Alias = aliasScholar, Drop = {"journalarticle", "study", ""}],
-              [Column = "OpenAlex.publication_type", Alias = aliasOpenAlexPubType, Drop = {"0", "article", "journal", "journal-article", "journal article", ""}],
-              [Column = "OpenAlex.crossref_type", Alias = aliasOpenAlexXrefType, Drop = {"journal-article", "article", ""}],
-              [Column = "OpenAlex.Genre", Alias = aliasOpenAlexGenre, Drop = {"0", "article", ""}],
-              [Column = "crossref.publication_type", Alias = aliasCrossrefPubType, Drop = {"journal-article", "article", ""}]
+              [Column = reviewSources[PubMed], Alias = aliasPublicationType, Drop = List.Union({dropJournalish, dropSupportish, {""}})],
+              [Column = reviewSources[Scholar], Alias = aliasScholar, Drop = {"journalarticle", "study", ""}],
+              [Column = reviewSources[OpenAlexType], Alias = aliasOpenAlexPubType, Drop = {"0", "article", "journal", "journal-article", "journal article", ""}],
+              [Column = reviewSources[OpenAlexCrossref], Alias = aliasOpenAlexXrefType, Drop = {"journal-article", "article", ""}],
+              [Column = reviewSources[OpenAlexGenre], Alias = aliasOpenAlexGenre, Drop = {"0", "article", ""}],
+              [Column = reviewSources[CrossrefType], Alias = aliasCrossrefPubType, Drop = {"journal-article", "article", ""}]
             },
           classificationNormalized =
             List.Accumulate(
@@ -2088,17 +2177,16 @@ let
                 )
             ),
           reviewSignals = [BaseWeight = 2, Threshold = 0.335],
-          responseColumns = {"publication_type", "scholar.PublicationTypes", "OpenAlex.publication_type", "OpenAlex.crossref_type"},
           withResponseCount =
             Table.AddColumn(
               classificationNormalized,
-              "n_responces",
+              responseCountColumn,
               each
                 let
                   currentRow = _,
                   responses =
                     List.Transform(
-                      responseColumns,
+                      reviewVoteColumns,
                       (columnName as text) =>
                         let
                           value = Record.FieldOrDefault(currentRow, columnName, null),
@@ -2116,28 +2204,34 @@ let
               "updated_review",
               each
                 let
-                  pubType = Text.Lower(ToText(Record.FieldOrDefault(_, "publication_type", ""))),
-                  scholarType = Text.Lower(ToText(Record.FieldOrDefault(_, "scholar.PublicationTypes", ""))),
-                  openAlexType = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.publication_type", ""))),
-                  openAlexXref = Text.Lower(ToText(Record.FieldOrDefault(_, "OpenAlex.crossref_type", ""))),
-                  baseReview = Record.FieldOrDefault(_, "review", false),
+                  pubType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewSources[PubMed], ""))),
+                  scholarType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewSources[Scholar], ""))),
+                  openAlexType = Text.Lower(ToText(Record.FieldOrDefault(_, reviewSources[OpenAlexType], ""))),
+                  openAlexXref = Text.Lower(ToText(Record.FieldOrDefault(_, reviewSources[OpenAlexCrossref], ""))),
+                  baseReview = Record.FieldOrDefault(_, reviewColumnName, false),
                   voteScore =
                     Number.From(Text.Contains(pubType, "review")) +
                     Number.From(scholarType = "review") +
                     Number.From(openAlexType = "review") +
                     Number.From(openAlexXref = "review") +
                     Number.From(baseReview) * reviewSignals[BaseWeight],
-                  normalizedScore = voteScore / Record.Field(_, "n_responces")
+                  normalizedScore = voteScore / Record.Field(_, responseCountColumn)
                 in
                   baseReview or normalizedScore > reviewSignals[Threshold],
               type logical
             ),
           reviewFinal =
             let
-              withoutLegacy = RemoveColumnsSafe(withReview, {"review"})
+              withoutLegacy = RemoveColumnsSafe(withReview, {reviewColumnName})
             in
-              RenameColumnsSafe(withoutLegacy, {{"updated_review", "review"}}),
-          withExperimentalFlag = Table.AddColumn(reviewFinal, "is_experimental", each not [review], type logical),
+              RenameColumnsSafe(withoutLegacy, {{"updated_review", reviewColumnName}}),
+          withExperimentalFlag =
+            Table.AddColumn(
+              reviewFinal,
+              experimentalColumnName,
+              each not Record.Field(_, reviewColumnName),
+              type logical
+            ),
           documentSchema = [
             Rename = {
               {"_title", "title"},
@@ -2146,7 +2240,7 @@ let
               {"OpenAlex.MeSH.descriptors", "OpenAlex.MeSH"},
               {"PubMed.MeSH_Qualifiers", "MeSH.qualifiers"},
               {"PubMed.ChemicalList", "chemical_list"},
-              {"publication_type", "PubMed.publication_type"}
+              {reviewSources[PubMed], "PubMed.publication_type"}
             },
             Type = {
               {"PMID", Int64.Type},
@@ -2161,13 +2255,13 @@ let
               {"OpenAlex.MeSH", type text},
               {"MeSH.qualifiers", type text},
               {"chemical_list", type text},
-              {"ChEMBL.document_chembl_id", type text},
+              {documentIdColumn, type text},
               {"PubMed.publication_type", type text},
-              {"scholar.PublicationTypes", type text},
-              {"OpenAlex.publication_type", type text},
-              {"OpenAlex.crossref_type", type text},
-              {"OpenAlex.Genre", type text},
-              {"crossref.publication_type", type text},
+              {reviewSources[Scholar], type text},
+              {reviewSources[OpenAlexType], type text},
+              {reviewSources[OpenAlexCrossref], type text},
+              {reviewSources[OpenAlexGenre], type text},
+              {reviewSources[CrossrefType], type text},
               {"significant_citations_fraction", type logical},
               {"document_contains_external_links", type logical},
               {"is_experimental_doc", type logical},
@@ -2175,9 +2269,9 @@ let
               {"citations", Int64.Type},
               {"n_assay", Int64.Type},
               {"n_testitem", Int64.Type},
-              {"n_responces", Int64.Type},
-              {"review", type logical},
-              {"is_experimental", type logical}
+              {responseCountColumn, Int64.Type},
+              {reviewColumnName, type logical},
+              {experimentalColumnName, type logical}
             },
             Order = {
               "PMID",
@@ -2192,13 +2286,13 @@ let
               "OpenAlex.MeSH",
               "MeSH.qualifiers",
               "chemical_list",
-              "ChEMBL.document_chembl_id",
+              documentIdColumn,
               "PubMed.publication_type",
-              "scholar.PublicationTypes",
-              "OpenAlex.publication_type",
-              "OpenAlex.crossref_type",
-              "OpenAlex.Genre",
-              "crossref.publication_type",
+              reviewSources[Scholar],
+              reviewSources[OpenAlexType],
+              reviewSources[OpenAlexCrossref],
+              reviewSources[OpenAlexGenre],
+              reviewSources[CrossrefType],
               "significant_citations_fraction",
               "document_contains_external_links",
               "is_experimental_doc",
@@ -2206,9 +2300,9 @@ let
               "citations",
               "n_assay",
               "n_testitem",
-              "n_responces",
-              "review",
-              "is_experimental"
+              responseCountColumn,
+              reviewColumnName,
+              experimentalColumnName
             }
           ],
           ApplyDocumentSchema = (tbl as table) as table =>
