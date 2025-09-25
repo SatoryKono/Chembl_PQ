@@ -181,6 +181,7 @@ pipeline:
       structure_type: string
       is_radical: bool
       standard_inchi_key: string
+      canonical_smiles: string
       unknown_chirality: bool
       invalid_record: bool
     column_order:
@@ -191,6 +192,7 @@ pipeline:
       - structure_type
       - is_radical
       - standard_inchi_key
+      - canonical_smiles
       - unknown_chirality
       - invalid_record
   assay:
