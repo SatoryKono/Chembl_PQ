@@ -14,7 +14,10 @@ def test_document_postprocess(document_inputs, test_config) -> None:
         {
             "PMID": [1001, 1002],
             "doi": ["10.1000/xyz", "10.1000/abc"],
-            "sort_order": ["001", "002"],
+            "sort_order": [
+                "1234-5678:2020-01-01:00001001",
+                "8765-4321:2021-06-01:00001002",
+            ],
             "completed": ["2020-01-01", "2021-06-01"],
             "invalid_record": [False, False],
             "title": ["Title A", "Title B"],
@@ -56,8 +59,12 @@ def test_document_postprocess_backfills_missing_columns(
     minimal_document = document_inputs["document"][
         ["ChEMBL.document_chembl_id"]
     ].copy()
+    minimal_document_out = document_inputs["document_out"][
+        ["ChEMBL.document_chembl_id"]
+    ].copy()
     inputs = {
         "document": minimal_document,
+        "document_out": minimal_document_out,
         "activity": document_inputs["activity"],
         "citation_fraction": document_inputs["citation_fraction"],
     }
