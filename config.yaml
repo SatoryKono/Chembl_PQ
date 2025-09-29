@@ -13,11 +13,11 @@ files:
   testitem_reference_csv: "e:\github\Chembl_PQ\dictionary\_curation\testitem.csv"
   activity_reference_csv: "e:\github\Chembl_PQ\dictionary\_curation\activity.csv"
 
-  document_csv: "e:\github\ChEMBL_data_acquisition\data\output\document\output.document_20250924.csv"
-  testitem_csv: "e:\github\ChEMBL_data_acquisition\data\output\testitem\output.testitem_20250925.csv"  
-  activity_csv: "e:\github\ChEMBL_data_acquisition\data\output\activity\output.activity_20250921.csv"  
-  assay_csv:    "e:\github\ChEMBL_data_acquisition\data\output\assay\output.assay_20250925.csv"
-  target_csv:   "e:\github\ChEMBL_data_acquisition\data\output\target\output.targets_20250924.csv"
+  document_csv: "e:\github\ChEMBL_data_acquisition\data\output\document\output.document_20250928.csv"
+  testitem_csv: "e:\github\ChEMBL_data_acquisition\data\output\testitem\output.testitem_20250928.csv"  
+  activity_csv: "e:\github\ChEMBL_data_acquisition\data\output\activity\output.activity_20250928.csv"  
+  assay_csv:    "e:\github\ChEMBL_data_acquisition\data\output\assay\output.assay_20250928.csv"
+  target_csv:   "e:\github\ChEMBL_data_acquisition\data\output\target\output.targets_20250928.csv"
 
 io:
   encoding_in: utf8
