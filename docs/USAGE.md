@@ -27,6 +27,21 @@ python scripts/get_activity_data.py --config config.yaml
 By default, results are written to ``outputs.dir`` specified in the config. Use
 ``--out`` to write to another file.
 
+When running against local fixtures, the loader will automatically look inside
+``data/input`` if the configured path does not exist. Override this behaviour by
+setting ``source.fallback_dirs`` to a list of directories to search, for
+example::
+
+    source:
+      kind: file
+      base_path: "E:/github/ChEMBL_data_acquisition/data/output"
+      fallback_dirs:
+        - "data/input"
+
+Files are matched by exact name first and, when the filename follows the
+``prefix_YYYYMMDD.csv`` pattern, by the latest available date in the fallback
+directories.
+
 ## Working with tests
 
 Run the unit suite with ``pytest``:

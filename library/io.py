@@ -3,12 +3,19 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DATED_FILENAME = re.compile(
+    r"^(?P<prefix>.+?_)(?P<date>\d{8})(?P<suffix>\.[^.]+)$"
+)
 
 
 _QUOTING_MAP = {
@@ -52,6 +59,66 @@ def _build_path(path_key: str, config: Dict[str, Any]) -> Path:
     if base_path and not str(base_path).startswith("http"):
         return (base_path / rel_path).resolve()
     return Path(rel_path)
+
+
+def _fallback_directories(config: Dict[str, Any]) -> List[Path]:
+    source_cfg = config.get("source", {})
+    raw_dirs: Iterable[str] = source_cfg.get("fallback_dirs", ["data/input"])
+    resolved: List[Path] = []
+    for entry in raw_dirs:
+        if not entry:
+            continue
+        candidate = Path(entry)
+        if not candidate.is_absolute():
+            candidate = (_PROJECT_ROOT / candidate).resolve()
+        resolved.append(candidate)
+    return resolved
+
+
+def _extract_file_name(path: Path) -> str:
+    text = str(path)
+    if "\\" in text:
+        text = text.replace("\\", "/")
+    return Path(text).name
+
+
+def _search_dated_variants(original_name: str, directories: Iterable[Path]) -> Path | None:
+    match = _DATED_FILENAME.match(original_name)
+    if not match:
+        return None
+    prefix = match.group("prefix")
+    suffix = match.group("suffix")
+    target_date = match.group("date")
+    candidates: List[Tuple[str, Path]] = []
+    pattern = f"{prefix}*{suffix}"
+    for directory in directories:
+        if not directory.exists():
+            continue
+        for candidate in directory.glob(pattern):
+            candidate_match = _DATED_FILENAME.match(candidate.name)
+            if not candidate_match:
+                continue
+            candidates.append((candidate_match.group("date"), candidate))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    for candidate_date, candidate_path in candidates:
+        if candidate_date <= target_date:
+            return candidate_path
+    return candidates[0][1]
+
+
+def _locate_fallback_path(path: Path, config: Dict[str, Any]) -> Path | None:
+    fallback_dirs = _fallback_directories(config)
+    file_name = _extract_file_name(path)
+    for directory in fallback_dirs:
+        candidate = directory / file_name
+        if candidate.exists():
+            return candidate
+    dated_match = _search_dated_variants(file_name, fallback_dirs)
+    if dated_match is not None:
+        return dated_match
+    return None
 
 
 def _encoding_candidates(io_cfg: Dict[str, Any]) -> list[str]:
@@ -110,7 +177,15 @@ def read_csv(path_key: str, config: Dict[str, Any]) -> pd.DataFrame:
 
     if source_kind == "file":
         if not path.exists():
-            raise LoaderError(f"File not found: {path}")
+            fallback = _locate_fallback_path(path, config)
+            if fallback is not None:
+                logger.info(
+                    "Using fallback path",
+                    extra={"path_key": path_key, "requested": str(path), "fallback": str(fallback)},
+                )
+                path = fallback
+            else:
+                raise LoaderError(f"File not found: {path}")
         for encoding in encodings:
             try:
                 kwargs = _read_kwargs(config, encoding=encoding)
