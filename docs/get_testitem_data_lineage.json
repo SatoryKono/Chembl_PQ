@@ -1,0 +1,99 @@
+{
+  "inputs": [
+    {
+      "name": "testitem",
+      "path": "config.files.testitem_csv",
+      "schema": [
+        ["molecule_chembl_id", "string", true],
+        ["pref_name", "string", true],
+        ["all_names", "string", true],
+        ["molecule_structures.canonical_smiles", "string", true],
+        ["molecule_type", "string", true],
+        ["structure_type", "string", true],
+        ["is_radical", "boolean", true],
+        ["molecule_structures.standard_inchi_key", "string", true],
+        ["standard_inchi_key", "string", true],
+        ["unknown_chirality", "string", true],
+        ["nstereo", "Int64", true],
+        ["document_chembl_id", "string", true]
+      ]
+    },
+    {
+      "name": "testitem_reference",
+      "path": "config.files.testitem_reference_csv",
+      "schema": [
+        ["molecule_chembl_id", "string", false],
+        ["all_names", "string", true],
+        ["nstereo", "Int64", true]
+      ]
+    }
+  ],
+  "stages": [
+    {
+      "id": "S3",
+      "desc": "Apply reference overrides and normalize testitem fields",
+      "code_refs": ["library/transforms/testitem.py:85-196"]
+    }
+  ],
+  "columns": [
+    {
+      "output": "canonical_smiles",
+      "sources": [
+        "testitem.canonical_smiles",
+        "testitem.molecule_structures.canonical_smiles"
+      ],
+      "transform": "first available candidate, cast to string",
+      "nullable": true
+    },
+    {
+      "output": "unknown_chirality",
+      "sources": [
+        "testitem.nstereo",
+        "config.pipeline.testitem.chirality_reference"
+      ],
+      "transform": "nstereo differs from reference",
+      "nullable": true
+    },
+    {
+      "output": "invalid_record",
+      "sources": [
+        "testitem.molecule_type",
+        "testitem.structure_type",
+        "testitem.standard_inchi_key",
+        "testitem.molecule_structures.standard_inchi_key"
+      ],
+      "transform": "fails expected molecule/structure type or has empty InChI",
+      "nullable": false
+    }
+  ],
+  "joins": [
+    {
+      "left": "testitem",
+      "right": "testitem_reference",
+      "keys": ["molecule_chembl_id"],
+      "type": "left",
+      "note": "implemented via Series.map"
+    }
+  ],
+  "config_used": [
+    "files.testitem_csv",
+    "files.testitem_reference_csv",
+    "files.activity_csv",
+    "outputs.dir",
+    "cleaning.sort_pipes",
+    "pipeline.testitem.invalid_rules",
+    "pipeline.testitem.chirality_reference",
+    "pipeline.testitem.skeleton_length",
+    "pipeline.testitem.type_map",
+    "pipeline.testitem.column_order"
+  ],
+  "outputs": [
+    {
+      "path": "outputs.dir/testitem_postprocessed.csv",
+      "primary_key": []
+    }
+  ],
+  "gaps": [
+    "parent_molecule_chembl_id resolution not implemented"
+  ]
+}
