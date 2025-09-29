@@ -34,3 +34,5 @@ Columns, ordering and data types are enforced by ``pipeline.*.type_map`` and
   by target identifier.
 * Outputs strictly match ``pipeline.target.output_columns`` with types forced via
   ``pipeline.target.type_map``.
+* Полное описание источников, стадий и нормализации доступно в
+  [документе «Постобработка целей ChEMBL»](./TARGET_PIPELINE_RU.md).
