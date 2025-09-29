@@ -9,9 +9,18 @@ import pandas as pd
 from library import io as library_io
 
 
-def _build_config(base_path: Path, file_name: str, *, extra_io: dict[str, Any] | None = None) -> dict:
+def _build_config(
+    base_path: Path,
+    file_name: str,
+    *,
+    extra_io: dict[str, Any] | None = None,
+    extra_source: dict[str, Any] | None = None,
+) -> dict:
+    source_cfg = {"kind": "file", "base_path": str(base_path)}
+    if extra_source:
+        source_cfg.update(extra_source)
     io_config = {
-        "source": {"kind": "file", "base_path": str(base_path)},
+        "source": source_cfg,
         "files": {"sample": file_name},
         "io": {
             "encoding_in": "utf8",
@@ -36,6 +45,46 @@ def test_read_csv(tmp_path: Path) -> None:
 
     assert list(df.columns) == ["col1", "col2"]
     assert df.iloc[0, 0] == 1
+
+
+def test_read_csv_uses_fallback_directory(tmp_path: Path) -> None:
+    primary_dir = tmp_path / "primary"
+    fallback_dir = tmp_path / "fallback"
+    primary_dir.mkdir()
+    fallback_dir.mkdir()
+    sample_path = fallback_dir / "input.csv"
+    sample_path.write_text("col1\n1\n", encoding="utf-8")
+    config = _build_config(
+        primary_dir,
+        "input.csv",
+        extra_source={"fallback_dirs": [str(fallback_dir)]},
+    )
+
+    df = library_io.read_csv("sample", config)
+
+    assert list(df.columns) == ["col1"]
+    assert df.iloc[0, 0] == 1
+
+
+def test_read_csv_falls_back_to_latest_dated_file(tmp_path: Path) -> None:
+    primary_dir = tmp_path / "primary"
+    fallback_dir = tmp_path / "fallback"
+    primary_dir.mkdir()
+    fallback_dir.mkdir()
+    older_file = fallback_dir / "output.targets_20240101.csv"
+    newer_file = fallback_dir / "output.targets_20240215.csv"
+    older_file.write_text("col1\n1\n", encoding="utf-8")
+    newer_file.write_text("col1\n2\n", encoding="utf-8")
+    config = _build_config(
+        primary_dir,
+        "output.targets_20240301.csv",
+        extra_source={"fallback_dirs": [str(fallback_dir)]},
+    )
+
+    df = library_io.read_csv("sample", config)
+
+    assert list(df.columns) == ["col1"]
+    assert df.iloc[0, 0] == 2
 
 
 def test_read_csv_sets_low_memory(monkeypatch, tmp_path: Path) -> None:
